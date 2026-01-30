@@ -10,7 +10,7 @@ class ArchitectAgent:
     def __init__(self):
         self.model = None
 
-    async def design_system(self, user_prompt: str) -> dict:
+    async def design_system(self, user_prompt: str, tech_stack: str = "Auto-detect") -> dict:
         """
         Analyzes the user prompt and generates a MINIMAL, production-ready system architecture.
         Uses Hybrid client: Gemini API → Ollama fallback.
@@ -21,7 +21,7 @@ class ArchitectAgent:
         client = HybridModelClient()
         sm = SocketManager()
         
-        await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": "Analyzing requirements..."})
+        await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"Analyzing requirements (Stack: {tech_stack})..."})
 
         system_prompt = f"""
 You are The Architect, the brain of ACEA Sentinel.
@@ -29,19 +29,19 @@ You are The Architect, the brain of ACEA Sentinel.
 **OBJECTIVE**: Design a MINIMAL, production-ready software system for this request:
 "{user_prompt}"
 
+**TECH STACK PREFERENCE**: {tech_stack}
+
 **CRITICAL FILE COUNT LIMITS**:
 🟢 SIMPLE (todo, calculator, tic-tac-toe, timer, counter): MAX 5-8 files
 🟡 MEDIUM (blog, dashboard, chat app, weather app): MAX 10-15 files
 🔴 COMPLEX (e-commerce, social media, booking system): MAX 18-25 files
-
-**TECH STACK**: Next.js 15 + FastAPI + SQLite
 
 **OUTPUT FORMAT**: Return ONLY a JSON object (no markdown):
 {{
     "project_name": "string",
     "description": "string",
     "complexity": "simple|medium|complex",
-    "tech_stack": "Next.js 15 + FastAPI + SQLite",
+    "tech_stack": "{tech_stack}",
     "file_structure": [
         {{"path": "frontend/app/page.tsx", "description": "Main page with game UI"}},
         {{"path": "backend/app/main.py", "description": "FastAPI server"}}

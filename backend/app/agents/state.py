@@ -11,6 +11,7 @@ class AgentState(TypedDict):
     user_prompt: str
     iteration_count: int
     max_iterations: int
+    tech_stack: Optional[str]
     
     # Artifacts
     blueprint: Dict[str, Any]       # Architect Output

@@ -2,9 +2,18 @@ import uvicorn
 import os
 import sys
 import subprocess
+import platform
 
 # Define path to venv python
-VENV_PYTHON = os.path.join(os.path.dirname(__file__), "backend", "venv", "Scripts", "python.exe")
+def get_venv_python():
+    is_windows = platform.system() == "Windows"
+    base_dir = os.path.dirname(__file__)
+    if is_windows:
+        return os.path.join(base_dir, "backend", "venv", "Scripts", "python.exe")
+    else:
+        return os.path.join(base_dir, "backend", "venv", "bin", "python")
+
+VENV_PYTHON = get_venv_python()
 
 def is_venv():
     return (hasattr(sys, 'real_prefix') or
@@ -19,7 +28,7 @@ if __name__ == "__main__":
             subprocess.call([VENV_PYTHON] + sys.argv)
             sys.exit()
         else:
-            print("⚠️ Warning: Virtual environment not found at backend/venv. Running with system Python.")
+            print(f"⚠️ Warning: Virtual environment not found at {VENV_PYTHON}. Running with system Python.")
 
     # 2. Start Server
     print("🚀 Starting ACEA Sentinel Backend...")
@@ -33,5 +42,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,
+        reload_dirs=["backend"],
         app_dir="."
     )

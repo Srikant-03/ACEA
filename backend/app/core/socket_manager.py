@@ -1,18 +1,27 @@
+# Socket Manager - Owns the Socket.IO server instance
+# This module has NO dependencies on main.py to avoid circular imports
 
 import socketio
 
+# Create the Socket.IO server instance here
+# This is THE source of truth for the sio object
+sio = socketio.AsyncServer(
+    async_mode='asgi',
+    cors_allowed_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+)
+
 class SocketManager:
+    """Singleton for emitting events from anywhere in the app."""
     _instance = None
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(SocketManager, cls).__new__(cls)
-            cls._instance.server: socketio.AsyncServer = None
         return cls._instance
 
-    def set_server(self, server: socketio.AsyncServer):
-        self.server = server
-
     async def emit(self, event: str, data: dict, room: str = None):
-        if self.server:
-            await self.server.emit(event, data, room=room)
+        """Emit an event to connected clients."""
+        await sio.emit(event, data, room=room)

@@ -28,7 +28,8 @@ async def architect_node(state: AgentState):
     await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "Architect analyzing requirements..."})
     
     prompt = state["user_prompt"]
-    blueprint = await architect_agent.design_system(prompt)
+    tech_stack = state.get("tech_stack", "Auto-detect")
+    blueprint = await architect_agent.design_system(prompt, tech_stack)
     
     if "error" in blueprint:
         await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"❌ Failed: {blueprint['error'][:100]}"})

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { AgentHexagon } from "@/components/war-room/AgentHexagon"
 import { LiveFeed } from "@/components/war-room/LiveFeed"
-import { Brain, Code, Shield, Eye, Database, Rocket, Laptop, X } from "lucide-react"
+import { Brain, Code, Shield, Eye, Database, Rocket, Laptop, X, Play, Square, Bug, Download, FileText } from "lucide-react"
 import { socket } from "@/lib/socket"
 import { FileExplorer } from "@/components/ide/FileExplorer"
 import { CodeEditor } from "@/components/ide/CodeEditor"
@@ -19,6 +19,7 @@ export default function WarRoomPage() {
         ADVISOR: "idle"
     })
     const [prompt, setPrompt] = useState("")
+    const [techStack, setTechStack] = useState("Auto-detect")
     const [isProcessing, setIsProcessing] = useState(false)
 
     // IDE State
@@ -27,6 +28,12 @@ export default function WarRoomPage() {
     const [files, setFiles] = useState<Record<string, string>>({})
     const [selectedFile, setSelectedFile] = useState<string | null>(null)
     const [fileList, setFileList] = useState<string[]>([])
+
+    // Execution State
+    const [executionStatus, setExecutionStatus] = useState<'idle' | 'running' | 'stopped' | 'error'>('idle')
+    const [executionLogs, setExecutionLogs] = useState<string>('')
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+    const [showPreview, setShowPreview] = useState(false)
 
     useEffect(() => {
         // Listen for connection
@@ -104,7 +111,7 @@ export default function WarRoomPage() {
 
     const fetchProjectFiles = async (id: string) => {
         try {
-            const res = await fetch(`http://localhost:8000/projects/${id}/files`)
+            const res = await fetch(`http://localhost:8000/api/projects/${id}/files`)
             const data = await res.json()
             // data is dict {path: content} from backend
             setFiles(data)
@@ -134,7 +141,100 @@ export default function WarRoomPage() {
         addLog("SYSTEM", "Initializing Autonomous Sequence...", "warning")
 
         // Emit start event to backend
-        socket.emit("start_mission", { prompt })
+        socket.emit("start_mission", { prompt, tech_stack: techStack })
+    }
+
+    // ============ EXECUTION HANDLERS ============
+    const handleExecute = async () => {
+        if (!projectId) return
+        setExecutionStatus('running')
+        setExecutionLogs('Starting execution...\n')
+        addLog('SYSTEM', 'Launching project execution...', 'info')
+
+        try {
+            const res = await fetch(`http://localhost:8000/api/execute/${projectId}`, { method: 'POST' })
+            const data = await res.json()
+            setExecutionLogs(data.logs || '')
+            if (data.preview_url) {
+                setPreviewUrl(data.preview_url)
+                setShowPreview(true)
+            }
+            if (data.status === 'error') {
+                setExecutionStatus('error')
+                addLog('SYSTEM', 'Execution failed. Click Debug for analysis.', 'error')
+            } else {
+                addLog('SYSTEM', `Execution started: ${data.status}`, 'success')
+                // Start polling logs
+                pollLogs()
+            }
+        } catch (e) {
+            setExecutionStatus('error')
+            addLog('SYSTEM', 'Failed to start execution', 'error')
+        }
+    }
+
+    const pollLogs = async () => {
+        if (!projectId) return
+        const interval = setInterval(async () => {
+            try {
+                const res = await fetch(`http://localhost:8000/api/logs/${projectId}`)
+                const data = await res.json()
+                setExecutionLogs(data.logs || '')
+            } catch (e) {
+                clearInterval(interval)
+            }
+        }, 3000)
+        // Store interval for cleanup (simplified - just run 10 times)
+        setTimeout(() => clearInterval(interval), 30000)
+    }
+
+    const handleStop = async () => {
+        if (!projectId) return
+        try {
+            await fetch(`http://localhost:8000/api/stop/${projectId}`, { method: 'POST' })
+            setExecutionStatus('stopped')
+            addLog('SYSTEM', 'Execution stopped', 'warning')
+        } catch (e) {
+            addLog('SYSTEM', 'Failed to stop execution', 'error')
+        }
+    }
+
+    const handleDebug = async () => {
+        if (!projectId) return
+        addLog('TESTER', 'Analyzing execution logs...', 'info')
+        try {
+            const res = await fetch(`http://localhost:8000/api/debug/${projectId}`, { method: 'POST' })
+            const data = await res.json()
+            if (data.issues_found?.length > 0) {
+                data.issues_found.forEach((issue: string) => addLog('TESTER', `Issue: ${issue}`, 'warning'))
+                data.suggestions?.forEach((s: string) => addLog('TESTER', `Suggestion: ${s}`, 'info'))
+            } else {
+                addLog('TESTER', 'No issues detected in logs', 'success')
+            }
+        } catch (e) {
+            addLog('SYSTEM', 'Debug analysis failed', 'error')
+        }
+    }
+
+    const handleDownload = async () => {
+        if (!projectId) return
+        window.open(`http://localhost:8000/api/projects/${projectId}/download`, '_blank')
+        addLog('SYSTEM', 'Download started', 'success')
+    }
+
+    const handleGenerateDocs = async () => {
+        if (!projectId) return
+        addLog('DOCUMENTER', 'Generating README.md...', 'info')
+        try {
+            const res = await fetch(`http://localhost:8000/api/generate-docs/${projectId}`, { method: 'POST' })
+            const data = await res.json()
+            if (data.status === 'generated') {
+                addLog('DOCUMENTER', 'README.md generated successfully', 'success')
+                fetchProjectFiles(projectId) // Refresh file list
+            }
+        } catch (e) {
+            addLog('SYSTEM', 'Documentation generation failed', 'error')
+        }
     }
 
     return (
@@ -164,7 +264,69 @@ export default function WarRoomPage() {
                         )}
                     </div>
 
+                    {/* Execution Controls */}
+                    {projectId && (
+                        <div className="mb-4 space-y-2">
+                            <div className="text-xs text-slate-400 uppercase font-bold mb-2">Execution Controls</div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={handleExecute}
+                                    disabled={executionStatus === 'running'}
+                                    className="flex-1 bg-green-600 hover:bg-green-500 disabled:bg-slate-700 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                >
+                                    <Play className="w-3 h-3" /> RUN
+                                </button>
+                                <button
+                                    onClick={handleStop}
+                                    disabled={executionStatus !== 'running'}
+                                    className="flex-1 bg-red-600 hover:bg-red-500 disabled:bg-slate-700 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                >
+                                    <Square className="w-3 h-3" /> STOP
+                                </button>
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={handleDebug}
+                                    className="flex-1 bg-yellow-600 hover:bg-yellow-500 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                >
+                                    <Bug className="w-3 h-3" /> DEBUG
+                                </button>
+                                <button
+                                    onClick={handleGenerateDocs}
+                                    className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                >
+                                    <FileText className="w-3 h-3" /> DOCS
+                                </button>
+                            </div>
+                            <button
+                                onClick={handleDownload}
+                                className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                            >
+                                <Download className="w-3 h-3" /> DOWNLOAD ZIP
+                            </button>
+                            {executionStatus !== 'idle' && (
+                                <div className={`text-xs text-center py-1 rounded ${executionStatus === 'running' ? 'bg-green-900/30 text-green-400' : executionStatus === 'error' ? 'bg-red-900/30 text-red-400' : 'bg-slate-800 text-slate-400'}`}>
+                                    Status: {executionStatus.toUpperCase()}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     <div className="mt-auto">
+                        <label className="text-xs text-slate-400 uppercase font-bold mb-2 block">Tech Stack Protocol</label>
+                        <select
+                            value={techStack}
+                            onChange={(e) => setTechStack(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white focus:outline-none focus:border-blue-500 mb-4"
+                        >
+                            <option value="Auto-detect">Auto-detect (Recommended)</option>
+                            <option value="Next.js + FastAPI">Next.js + FastAPI</option>
+                            <option value="React + Node.js">React + Node.js</option>
+                            <option value="Vue + Python">Vue + Python</option>
+                            <option value="Vanilla HTML/JS">Vanilla HTML/JS</option>
+                            <option value="Python Script">Python Script</option>
+                        </select>
+
                         <label className="text-xs text-slate-400 uppercase font-bold mb-2 block">Mission Objective</label>
                         <textarea
                             className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-sm text-white focus:outline-none focus:border-blue-500 h-32 mb-4 resize-none"

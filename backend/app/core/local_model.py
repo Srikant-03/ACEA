@@ -18,7 +18,7 @@ class OllamaClient:
             "qwen2.5-coder:14b",      # Best coding quality
             "qwen2.5-coder:7b",       # Faster fallback
             "codellama:13b",          # Alternative
-            "deepseek-coder-v2:16b",  # If available
+            "deepseek-coder:6.7b-instruct-q4_K_M",  # If available
         ]
         self.current_model = self.models[0]
     
