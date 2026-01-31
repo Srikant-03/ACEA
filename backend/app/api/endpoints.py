@@ -205,3 +205,87 @@ async def validate_project_route(project_id: str):
     
     return result
 
+# ==================== AI EDIT & MONITORING ENDPOINTS ====================
+
+class AIUpdateRequest(BaseModel):
+    file_path: str
+    instruction: str
+
+@router.post("/update-file-ai/{project_id}")
+async def ai_update_file(project_id: str, request: AIUpdateRequest):
+    """
+    AI-powered single file update.
+    Uses minimal API call - only modifies one file.
+    """
+    from app.services.smart_orchestrator import get_smart_orchestrator
+    from app.core.filesystem import read_file
+    
+    # Get current file content
+    current_content = read_file(project_id, request.file_path)
+    if current_content is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # AI update
+    orchestrator = get_smart_orchestrator()
+    updated_content = await orchestrator.update_single_file(
+        project_id,
+        request.file_path,
+        current_content,
+        request.instruction
+    )
+    
+    return {
+        "status": "success",
+        "file_path": request.file_path,
+        "updated_content": updated_content
+    }
+
+@router.get("/keys/status")
+async def get_key_status():
+    """Returns health status of all API keys."""
+    from app.core.key_manager import KeyManager
+    
+    km = KeyManager()
+    return km.get_status()
+
+@router.post("/generate-optimized")
+async def generate_project_optimized(request: GenerateRequest):
+    """
+    Optimized project generation using Smart Orchestrator.
+    Uses combined prompts and caching for reduced API calls.
+    """
+    from app.services.smart_orchestrator import get_smart_orchestrator
+    from app.core.filesystem import BASE_PROJECTS_DIR
+    import uuid
+    
+    project_id = str(uuid.uuid4())
+    orchestrator = get_smart_orchestrator()
+    
+    result = await orchestrator.generate_project_optimized(
+        prompt=request.prompt,
+        tech_stack=request.tech_stack if request.tech_stack != "Auto-detect" else None,
+        include_docs=True
+    )
+    
+    # Write files
+    project_dir = BASE_PROJECTS_DIR / project_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    
+    files = result.get("files", {})
+    for path, content in files.items():
+        file_path = project_dir / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, 'w') as f:
+            f.write(content)
+    
+    # Save blueprint
+    blueprint = result.get("blueprint", {})
+    with open(project_dir / "blueprint.json", 'w') as f:
+        json.dump(blueprint, f, indent=2)
+    
+    return {
+        "project_id": project_id,
+        "status": "success",
+        "source": result.get("source", "api"),
+        "files_generated": len(files)
+    }

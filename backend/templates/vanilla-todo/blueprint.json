@@ -1,0 +1,8 @@
+{
+    "project_name": "vanilla-todo",
+    "description": "A simple todo list application with vanilla HTML, CSS, and JavaScript",
+    "projectType": "frontend",
+    "tech_stack": "Vanilla HTML/JS",
+    "entrypoint": "open index.html",
+    "port": null
+}

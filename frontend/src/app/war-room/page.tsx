@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { AgentHexagon } from "@/components/war-room/AgentHexagon"
 import { LiveFeed } from "@/components/war-room/LiveFeed"
-import { Brain, Code, Shield, Eye, Database, Rocket, Laptop, X, Play, Square, Bug, Download, FileText } from "lucide-react"
+import { Brain, Code, Shield, Eye, Database, Rocket, Laptop, X, Play, Square, Bug, Download, FileText, Wand2 } from "lucide-react"
 import { socket } from "@/lib/socket"
 import { FileExplorer } from "@/components/ide/FileExplorer"
 import { CodeEditor } from "@/components/ide/CodeEditor"
@@ -237,12 +237,37 @@ export default function WarRoomPage() {
         }
     }
 
+    const handleAIEdit = async () => {
+        if (!projectId || !selectedFile) return
+        const instruction = window.prompt('What would you like to change in this file?')
+        if (!instruction) return
+
+        addLog('SYSTEM', 'AI editing file...', 'info')
+        try {
+            const res = await fetch(`http://localhost:8000/api/update-file-ai/${projectId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_path: selectedFile,
+                    instruction: instruction
+                })
+            })
+            const data = await res.json()
+            if (data.status === 'success') {
+                setFiles(prev => ({ ...prev, [selectedFile]: data.updated_content }))
+                addLog('SYSTEM', `File updated: ${selectedFile}`, 'success')
+            }
+        } catch (e) {
+            addLog('SYSTEM', 'AI edit failed', 'error')
+        }
+    }
+
     return (
-        <main className="min-h-screen bg-slate-950 text-white p-6 overflow-hidden relative font-sans">
+        <main className="min-h-screen bg-slate-950 text-white p-6 overflow-y-auto relative font-sans">
             {/* Background Grid */}
             <div className="absolute inset-0 bg-[linear-gradient(to_right,#4f4f4f2e_1px,transparent_1px),linear-gradient(to_bottom,#4f4f4f2e_1px,transparent_1px)] bg-[size:14px_24px] pointer-events-none" />
 
-            <div className="relative z-10 grid grid-cols-12 gap-6 h-[calc(100vh-3rem)]">
+            <div className="relative z-10 grid grid-cols-12 gap-6 min-h-[calc(100vh-3rem)]">
 
                 {/* Left Panel: Metrics & Input */}
                 <div className="col-span-3 border border-slate-800 bg-slate-950/80 p-4 rounded-xl backdrop-blur-md flex flex-col">
@@ -353,29 +378,77 @@ export default function WarRoomPage() {
                 </div>
 
                 {/* Center Panel: Visualization OR IDE */}
-                <div className="col-span-6 flex items-center justify-center relative border border-slate-800/50 rounded-xl bg-slate-950/50 backdrop-blur-sm overflow-hidden">
+                <div className="col-span-6 relative border border-slate-800/50 rounded-xl bg-slate-950/50 backdrop-blur-sm overflow-hidden flex flex-col">
                     {showIDE && projectId ? (
-                        <div className="absolute inset-0 flex flex-row">
-                            <FileExplorer
-                                files={fileList}
-                                onSelect={setSelectedFile}
-                                selectedPath={selectedFile || undefined}
-                            />
-                            <div className="flex-1 bg-[#1e1e1e]">
-                                {selectedFile ? (
-                                    <CodeEditor
-                                        code={files[selectedFile] || ""}
-                                        language={selectedFile.endsWith('json') ? 'json' : selectedFile.endsWith('tsx') ? 'typescript' : 'python'}
-                                    />
-                                ) : (
-                                    <div className="h-full flex items-center justify-center text-slate-500">
-                                        Select a file to view source
-                                    </div>
-                                )}
+                        <div className="absolute inset-0 flex flex-col">
+                            {/* Editor + Sidebar Area */}
+                            <div className="flex-1 flex flex-row overflow-hidden">
+                                <FileExplorer
+                                    files={fileList}
+                                    onSelect={setSelectedFile}
+                                    selectedPath={selectedFile || undefined}
+                                />
+                                <div className="flex-1 bg-[#1e1e1e] flex flex-col overflow-hidden">
+                                    {selectedFile ? (
+                                        <>
+                                            <div className="flex items-center justify-between bg-[#252526] px-3 py-1.5 border-b border-slate-700">
+                                                <span className="text-xs text-slate-400 font-mono">{selectedFile}</span>
+                                                <button
+                                                    onClick={handleAIEdit}
+                                                    className="flex items-center gap-1 bg-violet-600 hover:bg-violet-500 text-white text-xs px-2 py-1 rounded"
+                                                >
+                                                    <Wand2 className="w-3 h-3" /> AI Edit
+                                                </button>
+                                            </div>
+                                            <div className="flex-1 overflow-hidden">
+                                                <CodeEditor
+                                                    code={files[selectedFile] || ""}
+                                                    language={selectedFile.endsWith('json') ? 'json' : selectedFile.endsWith('tsx') ? 'typescript' : 'python'}
+                                                />
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="h-full flex items-center justify-center text-slate-500">
+                                            Select a file to view source
+                                        </div>
+                                    )}
+                                </div>
                             </div>
+
+                            {/* Execution Logs Panel - Always visible in IDE mode if logs exist */}
+                            {executionLogs && (
+                                <div className="w-full h-48 bg-black/90 border-t border-slate-700 p-2 overflow-auto font-mono text-xs text-green-400">
+                                    <div className="text-slate-500 mb-1 flex justify-between items-center">
+                                        <span>--- Execution Logs ---</span>
+                                        <button onClick={() => setExecutionLogs('')} className="hover:text-white">Clear</button>
+                                    </div>
+                                    <pre className="whitespace-pre-wrap">{executionLogs}</pre>
+                                </div>
+                            )}
+
+                            {/* Preview iframe - Overlays the IDE when active */}
+                            {showPreview && previewUrl && (
+                                <div className="absolute inset-0 z-20 bg-white flex flex-col">
+                                    <div className="bg-slate-800 p-2 flex justify-between items-center">
+                                        <span className="text-xs text-white font-mono">LIVE PREVIEW: {previewUrl}</span>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => window.open(previewUrl, '_blank')}
+                                                className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded"
+                                            >
+                                                Open New Tab
+                                            </button>
+                                            <button onClick={() => setShowPreview(false)} className="text-white hover:text-red-400">
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <iframe src={previewUrl} className="flex-1 w-full border-none" />
+                                </div>
+                            )}
                         </div>
                     ) : (
-                        <>
+                        <div className="h-full w-full flex items-center justify-center relative">
                             <div className="grid grid-cols-3 gap-8 place-items-center relative z-10">
                                 <AgentHexagon name="ARCHITECT" status={agents.ARCHITECT} icon={Brain} />
                                 <AgentHexagon name="VIRTUOSO" status={agents.VIRTUOSO} icon={Code} className="mt-12" />
@@ -388,7 +461,7 @@ export default function WarRoomPage() {
                             <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-20">
                                 <circle cx="50%" cy="50%" r="200" fill="none" stroke="currentColor" className="text-blue-500 animate-spin-slow" strokeDasharray="10 10" />
                             </svg>
-                        </>
+                        </div>
                     )}
                 </div>
 
@@ -397,6 +470,6 @@ export default function WarRoomPage() {
                     <LiveFeed logs={logs} />
                 </div>
             </div>
-        </main>
+        </main >
     )
 }

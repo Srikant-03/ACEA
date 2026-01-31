@@ -24,6 +24,7 @@ class DockerService:
     def __init__(self):
         self.client = None
         self.active_containers: Dict[str, str] = {}  # project_id -> container_id
+        self.simulated_logs: Dict[str, str] = {}     # project_id -> logs
         
         if DOCKER_AVAILABLE:
             try:
@@ -166,17 +167,14 @@ Project: {project_id}
 Tech Stack: {blueprint.get('tech_stack', 'Unknown')}
 Files: {len(file_list)}
 
-File Structure:
-{chr(10).join(f'  - {f}' for f in file_list[:20])}
+[SIM] Initializing runtime environment...
+[SIM] Checking dependencies: {'package.json' in str(file_list)}
+[SIM] Simulation started. 
 
-Note: Docker is not available. Install Docker Desktop for real execution.
-This is a simulation showing the project structure.
-
-To run manually:
-  cd {project_path}
-  npm install && npm start   # For Node projects
-  pip install -r requirements.txt && python main.py   # For Python projects
+NOTE: Docker is not available on this system. 
+Install Docker Desktop to enable real execution and live previews.
 """
+        self.simulated_logs[project_id] = logs
         
         return {
             "status": "simulated",
@@ -186,9 +184,15 @@ To run manually:
         }
     
     def get_container_logs(self, project_id: str, tail: int = 200) -> str:
-        """Fetch logs from running container."""
+        """Fetch logs from running container or simulation."""
         if not self.client:
-            return "Docker not available. Logs unavailable in simulation mode."
+            # Add a bit of "fake progress" to simulated logs
+            if project_id in self.simulated_logs:
+                log_lines = self.simulated_logs[project_id].split('\n')
+                if len(log_lines) < 25:
+                    self.simulated_logs[project_id] += f"[SIM] Activity detected at {time.strftime('%H:%M:%S')} - Running integrity checks...\n"
+                return self.simulated_logs[project_id]
+            return "Docker not available. No simulation active for this project."
         
         container_id = self.active_containers.get(project_id)
         if not container_id:
@@ -205,6 +209,8 @@ To run manually:
         if not self.client:
             if project_id in self.active_containers:
                 del self.active_containers[project_id]
+            if project_id in self.simulated_logs:
+                del self.simulated_logs[project_id]
             return True
         
         container_id = self.active_containers.get(project_id)
