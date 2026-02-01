@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # Gemini API
     GEMINI_API_KEYS: str = ""  # Comma separated
     
+    # CodeSandbox API
+    CODESANDBOX_API_KEY: str = ""
+    
     @property
     def api_keys_list(self) -> List[str]:
         return [k.strip() for k in self.GEMINI_API_KEYS.split(",") if k.strip()]

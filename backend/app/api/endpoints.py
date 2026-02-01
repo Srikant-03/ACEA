@@ -120,31 +120,34 @@ def _load_blueprint(project_id: str) -> dict:
 
 @router.post("/execute/{project_id}")
 async def execute_project_route(project_id: str):
-    """Execute project in Docker container."""
+    """Execute project using CodeSandbox (default) or Docker (fallback)."""
     docker_service = get_docker_service()
     blueprint = _load_blueprint(project_id)
     
-    result = docker_service.execute_project(project_id, blueprint)
+    # execute_project is now async
+    result = await docker_service.execute_project(project_id, blueprint)
     
     return {
         "status": result["status"],
         "logs": result["logs"],
         "preview_url": result.get("preview_url"),
+        "embed_url": result.get("embed_url"),
+        "execution_method": result.get("execution_method"),
         "container_id": result.get("container_id")
     }
 
 @router.get("/logs/{project_id}")
 async def get_logs_route(project_id: str):
-    """Get real-time logs from running container."""
+    """Get real-time logs from running execution."""
     docker_service = get_docker_service()
-    logs = docker_service.get_container_logs(project_id)
+    logs = docker_service.get_logs(project_id)
     return {"logs": logs}
 
 @router.post("/stop/{project_id}")
 async def stop_project_route(project_id: str):
-    """Stop running container."""
+    """Stop running execution."""
     docker_service = get_docker_service()
-    success = docker_service.stop_container(project_id)
+    success = docker_service.stop_execution(project_id)
     return {"status": "stopped" if success else "not_found"}
 
 @router.post("/debug/{project_id}")

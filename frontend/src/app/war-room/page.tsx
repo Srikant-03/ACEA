@@ -155,15 +155,23 @@ export default function WarRoomPage() {
             const res = await fetch(`http://localhost:8000/api/execute/${projectId}`, { method: 'POST' })
             const data = await res.json()
             setExecutionLogs(data.logs || '')
-            if (data.preview_url) {
-                setPreviewUrl(data.preview_url)
+
+            // Prefer embed_url (CodeSandbox) over preview_url (Docker)
+            const urlToUse = data.embed_url || data.preview_url
+            if (urlToUse) {
+                setPreviewUrl(urlToUse)
                 setShowPreview(true)
             }
+
             if (data.status === 'error') {
                 setExecutionStatus('error')
                 addLog('SYSTEM', 'Execution failed. Click Debug for analysis.', 'error')
+            } else if (data.status === 'simulated') {
+                setExecutionStatus('stopped')
+                addLog('SYSTEM', 'Running in simulation mode (no CodeSandbox/Docker available)', 'warning')
             } else {
-                addLog('SYSTEM', `Execution started: ${data.status}`, 'success')
+                const method = data.execution_method || 'unknown'
+                addLog('SYSTEM', `Execution started via ${method}: ${data.status}`, 'success')
                 // Start polling logs
                 pollLogs()
             }
