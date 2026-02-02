@@ -8,7 +8,7 @@ interface CodeEditorProps {
     readOnly?: boolean
 }
 
-export function CodeEditor({ code, language = "python", readOnly = true }: CodeEditorProps) {
+export function CodeEditor({ code, language = "python", readOnly = false }: CodeEditorProps) {
     return (
         <div className="h-full w-full border border-slate-800 rounded-md overflow-hidden bg-[#1e1e1e]">
             <Editor
