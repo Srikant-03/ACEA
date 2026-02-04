@@ -56,6 +56,11 @@ PROJECTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__fi
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 app.mount("/preview", StaticFiles(directory=PROJECTS_DIR, html=True), name="preview")
 
+# Mount Screenshots for Visual Verification
+SCREENSHOTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "screenshots")
+os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+app.mount("/screenshots", StaticFiles(directory=SCREENSHOTS_DIR), name="screenshots")
+
 # Finalize Socket App
 socket_app = socketio.ASGIApp(sio, app)
 

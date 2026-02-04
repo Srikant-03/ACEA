@@ -24,4 +24,8 @@ class SocketManager:
 
     async def emit(self, event: str, data: dict, room: str = None):
         """Emit an event to connected clients."""
-        await sio.emit(event, data, room=room)
+        try:
+            await sio.emit(event, data, room=room)
+        except Exception as e:
+            # Log to console since we can't emit to socket about a socket error
+            print(f"Socket Emit Error ({event}): {e}")

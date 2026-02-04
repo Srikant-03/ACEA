@@ -26,6 +26,9 @@ class SentinelAgent:
             ("SECRET_KEY = ", "Hardcoded Secret", "MEDIUM", "Use environment variables"),
             ("dangerouslySetInnerHTML", "XSS Risk", "MEDIUM", "Sanitize HTML content"),
             ("SELECT *", "SQL Security", "LOW", "Consider specific column selection"),
+            ("AKIA[0-9A-Z]{16}", "AWS Access Key", "CRITICAL", "Revoke and use env vars"),
+            ("sk_live_[0-9a-zA-Z]{24}", "Stripe Secret Key", "CRITICAL", "Revoke and use env vars"),
+            ("0.0.0.0", "Insecure Binding", "LOW", "Bind to specific interface if possible"),
         ]
         
         for pattern, vuln_type, severity, fix in dangerous_patterns:

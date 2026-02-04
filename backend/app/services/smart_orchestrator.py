@@ -189,8 +189,9 @@ REQUIREMENTS:
                 pkg = json.loads(result["files"]["package.json"])
                 pkg["name"] = prompt.lower().replace(" ", "-")[:30]
                 result["files"]["package.json"] = json.dumps(pkg, indent=2)
-            except:
-                pass
+            except Exception as e:
+                # Log error but continue returning cached result
+                print(f"Cache customization error: {e}")
         
         return result
     

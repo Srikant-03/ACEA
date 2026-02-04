@@ -7,11 +7,17 @@ from app.core.socket_manager import sio
 
 @sio.event
 async def connect(sid, environ):
-    print(f"Client connected: {sid}")
+    try:
+        print(f"Client connected: {sid}")
+    except Exception as e:
+        print(f"Connect Error: {e}")
 
 @sio.event
 async def disconnect(sid):
-    print(f"Client disconnected: {sid}")
+    try:
+        print(f"Client disconnected: {sid}")
+    except Exception as e:
+        print(f"Disconnect Error: {e}")
 
 @sio.event
 async def start_mission(sid, data):

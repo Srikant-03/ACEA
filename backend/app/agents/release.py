@@ -16,14 +16,6 @@ class ReleaseAgent:
     def prepare_release(self, project_id: str, blueprint: dict = None) -> Dict:
         """
         Validate and prepare project for download.
-        
-        Returns:
-        {
-            "ready": bool,
-            "missing_files": List[str],
-            "warnings": List[str],
-            "file_count": int
-        }
         """
         project_path = BASE_PROJECTS_DIR / project_id
         
@@ -35,41 +27,18 @@ class ReleaseAgent:
                 "file_count": 0
             }
         
-        warnings = []
-        missing = []
-        
         # Get all files
         files = list(project_path.glob("**/*"))
         file_list = [f for f in files if f.is_file()]
         
-        # Check for essential files
-        essential = ["package.json", "requirements.txt", "main.py", "app.py", "index.html"]
-        has_essential = any(f.name in essential for f in file_list)
-        
-        if not has_essential:
-            warnings.append("No standard entry point file found")
-        
-        # Check for README
-        has_readme = any(f.name.lower() == "readme.md" for f in file_list)
-        if not has_readme:
-            warnings.append("No README.md found")
-        
-        # Check for empty files
-        empty_files = [f for f in file_list if f.stat().st_size == 0]
-        if empty_files:
-            warnings.append(f"{len(empty_files)} empty file(s) found")
+        # Run validations
+        warnings = self._validate_files(file_list)
+        missing = self._validate_blueprint(project_path, blueprint)
         
         # Generate .gitignore if missing
         gitignore_path = project_path / ".gitignore"
         if not gitignore_path.exists():
             self._generate_gitignore(project_path, blueprint)
-        
-        # Blueprint validation
-        if blueprint:
-            expected_files = [f.get("path") for f in blueprint.get("file_structure", [])]
-            for expected in expected_files:
-                if not (project_path / expected).exists():
-                    missing.append(expected)
         
         return {
             "ready": len(missing) == 0,
@@ -77,6 +46,36 @@ class ReleaseAgent:
             "warnings": warnings,
             "file_count": len(file_list)
         }
+
+    def _validate_files(self, file_list: List[Path]) -> List[str]:
+        """Check for essential files and common issues."""
+        warnings = []
+        
+        # Check for essential files
+        essential = ["package.json", "requirements.txt", "main.py", "app.py", "index.html"]
+        if not any(f.name in essential for f in file_list):
+            warnings.append("No standard entry point file found")
+        
+        # Check for README
+        if not any(f.name.lower() == "readme.md" for f in file_list):
+            warnings.append("No README.md found")
+        
+        # Check for empty files
+        empty_files = [f for f in file_list if f.stat().st_size == 0]
+        if empty_files:
+            warnings.append(f"{len(empty_files)} empty file(s) found")
+            
+        return warnings
+
+    def _validate_blueprint(self, project_path: Path, blueprint: dict) -> List[str]:
+        """Check if all blueprint files exist."""
+        missing = []
+        if blueprint:
+            expected_files = [f.get("path") for f in blueprint.get("file_structure", [])]
+            for expected in expected_files:
+                if not (project_path / expected).exists():
+                    missing.append(expected)
+        return missing
     
     def _generate_gitignore(self, project_path: Path, blueprint: dict = None):
         """Generate appropriate .gitignore."""

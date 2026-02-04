@@ -99,3 +99,9 @@ class KeyManager:
         for stats in self.key_stats:
             stats['calls_remaining'] = 1500
             stats['errors'] = 0
+
+    @staticmethod
+    def build_api_keys_string(keys: List[str]) -> str:
+        """Build comma-separated key string efficiently."""
+        return ",".join(keys)
+

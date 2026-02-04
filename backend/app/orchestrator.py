@@ -56,30 +56,25 @@ async def virtuoso_node(state: AgentState):
     print("--- VIRTUOSO NODE ---")
     await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "Entering Virtuoso Node..."})
     
-    blueprint = state["blueprint"]
+    # 1. Validate Blueprint
+    blueprint = state.get("blueprint")
     if not blueprint:
         await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "ERROR: Blueprint is missing!"})
         return {"current_status": "error", "errors": ["Missing Blueprint"]}
 
+    # 2. Determine Mode (Self-Healing vs Normal)
     errors = state.get("errors", [])
     current_files = state.get("file_system", {})
     iteration = state.get("iteration_count", 0)
     
     if errors and iteration > 0:
-        # SELF-HEALING MODE: Regenerate with error context
-        await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"🔧 Self-Healing Mode: Fixing {len(errors)} errors (Iteration {iteration})..."})
-        new_files = await virtuoso_agent.generate_from_blueprint(blueprint, existing_files=current_files, errors=errors)
+        new_files = await _handle_self_healing(sm, errors, current_files, iteration)
     else:
-        # Normal generation
-        new_files = await virtuoso_agent.generate_from_blueprint(blueprint)
+        new_files = await _handle_normal_generation(blueprint)
     
-    # FIX: Unescape newlines in generated code (JSON batch generation returns escaped strings)
-    for path in new_files:
-        if isinstance(new_files[path], str):
-            new_files[path] = new_files[path].replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
-    
-    # PERSIST TO DISK
-    project_path = write_project_files(state["project_id"], new_files)
+    # 3. Post-Process & Persist
+    new_files = _post_process_files(new_files)
+    write_project_files(state["project_id"], new_files)
     
     return {
         "file_system": new_files,
@@ -87,6 +82,29 @@ async def virtuoso_node(state: AgentState):
         "messages": [f"Virtuoso generated {len(new_files)} files"],
         "errors": []  # Clear errors after regeneration
     }
+
+async def _handle_self_healing(sm, errors, current_files, iteration):
+    """Handle self-healing mode logic."""
+    await sm.emit("agent_log", {
+        "agent_name": "VIRTUOSO", 
+        "message": f"🔧 Self-Healing Mode: Patching {len(errors)} errors (Iteration {iteration})..."
+    })
+    return await virtuoso_agent.repair_files(current_files, errors)
+
+async def _handle_normal_generation(blueprint):
+    """Handle normal code generation logic."""
+    return await virtuoso_agent.generate_from_blueprint(blueprint)
+
+def _post_process_files(files):
+    """Unescape newlines and clean up file content."""
+    cleaned = {}
+    for path, content in files.items():
+        if isinstance(content, str):
+            cleaned[path] = content.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+        else:
+            cleaned[path] = content
+    return cleaned
+
 
 async def sentinel_node(state: AgentState):
     from app.core.socket_manager import SocketManager
@@ -123,12 +141,14 @@ async def watcher_node(state: AgentState):
     await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Starting project verification..."})
     
     try:
-        # Use quick_verify for faster feedback (no server startup)
-        # For full browser testing, use: run_and_verify_project(project_path, project_id)
-        report = await watcher_agent.quick_verify(project_id)
+        # User requested FULL AUTONOMY: run code, check errors, fix errors.
+        # We switch from quick_verify to run_and_verify_project
+        report = await watcher_agent.run_and_verify_project(project_path, project_id)
         
         if report["status"] == "FAIL":
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"❌ Verification failed: {len(report['errors'])} errors found"})
+        elif report["status"] == "SKIPPED":
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "⚠️ Verification skipped (Playwright missing)"})
         else:
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "✅ Project verification complete!"})
         

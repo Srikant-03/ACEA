@@ -17,9 +17,19 @@ class ArchitectAgent:
         """
         from app.core.local_model import HybridModelClient
         from app.core.socket_manager import SocketManager
+        from app.core.cache import cache
         
         client = HybridModelClient()
         sm = SocketManager()
+        
+        # Initialize Redis (optional, non-blocking)
+        await cache.init_redis()
+        
+        # Check Cache
+        cached_response = await cache.get(user_prompt, "architect", tech_stack=tech_stack)
+        if cached_response:
+            await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": "⚡ Retrieved blueprint from cache"})
+            return json.loads(cached_response)
         
         await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"Analyzing requirements (Stack: {tech_stack})..."})
 
@@ -51,14 +61,15 @@ You are The Architect, the brain of ACEA Sentinel.
 }}
 
 **EXAMPLES**:
-Tic-Tac-Toe (5 files): page.tsx, layout.tsx, globals.css, main.py, requirements.txt
-Todo App (7 files): page.tsx, layout.tsx, globals.css, main.py, database.py, models.py, requirements.txt
+Tic-Tac-Toe (Next.js): page.tsx, layout.tsx, globals.css, tailwind.config.ts, postcss.config.mjs, main.py
+Todo App (Full Stack): page.tsx, layout.tsx, globals.css, tailwind.config.ts, postcss.config.mjs, main.py, database.py, models.py
 """
         
         max_attempts = 3
         errors = []
         
         for attempt in range(max_attempts):
+
             try:
                 await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"Generating blueprint (Attempt {attempt+1}/{max_attempts})..."})
                 
@@ -72,6 +83,69 @@ Todo App (7 files): page.tsx, layout.tsx, globals.css, main.py, database.py, mod
                 complexity = result.get("complexity", "simple")
                 
                 await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"✅ Blueprint: {result['project_name']} ({file_count} files, {complexity})"})
+                
+                # --- SAFETY NET: Ensure Config Files Exist & Paths are Correct ---
+                files = result.get("file_structure", [])
+                
+                # 1. Enforce 'frontend/' prefix for web files if missing
+                for f in files:
+                    curr_path = f["path"]
+                    if not curr_path.startswith("frontend/") and not curr_path.startswith("backend/"):
+                        # Heuristic: .tsx, .jsx, .css, .html -> frontend
+                        if any(ext in curr_path for ext in [".tsx", ".jsx", ".css", ".html", "vite", "next", "tailwind"]):
+                            f["path"] = f"frontend/{curr_path}"
+                            
+                paths = [f["path"] for f in files]
+                added_configs = []
+
+                # 2. Add Configs based on Stack Detection
+                is_nextjs = "next" in result.get("tech_stack", "").lower() or any("next.config" in p for p in paths) or any("app/page.tsx" in p for p in paths)
+                
+                # FIX: Ensure next.js uses app router structure if detecting nextjs
+                if is_nextjs:
+                     # Check if we have app/page.tsx
+                     has_app = any("app/page.tsx" in p for p in paths)
+                     has_pages = any("pages/index.tsx" in p for p in paths)
+                     
+                     if not (has_app or has_pages):
+                         # Force app directory structure for main page if missing
+                         for f in files:
+                             if f["path"] == "frontend/page.tsx" or f["path"] == "frontend/index.tsx":
+                                 f["path"] = "frontend/app/page.tsx"
+                                 
+                is_vite = "vite" in result.get("tech_stack", "").lower() or "react" in result.get("tech_stack", "").lower() or any("vite.config" in p for p in paths)
+
+                if is_nextjs:
+                    next_configs = {
+                        "frontend/tailwind.config.ts": "Tailwind CSS configuration",
+                        "frontend/postcss.config.mjs": "PostCSS configuration",
+                        "frontend/next.config.js": "Next.js configuration",
+                        "frontend/tsconfig.json": "TypeScript configuration"
+                    }
+                    for path, desc in next_configs.items():
+                        if not any(path in p for p in paths):
+                            files.append({"path": path, "description": desc})
+                            added_configs.append(path)
+                            
+                elif is_vite:
+                     vite_configs = {
+                        "frontend/vite.config.js": "Vite configuration",
+                        "frontend/tailwind.config.js": "Tailwind CSS configuration",
+                        "frontend/postcss.config.js": "PostCSS configuration",
+                        "frontend/package.json": "Package manifest"
+                    }
+                     for path, desc in vite_configs.items():
+                        if not any(path in p for p in paths):
+                            files.append({"path": path, "description": desc})
+                            added_configs.append(path)
+                
+                if added_configs:
+                    result["file_structure"] = files
+                    await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"🔧 Architect added missing configs: {len(added_configs)} files"})
+
+                # Cache successful result
+                await cache.set(user_prompt, "architect", json.dumps(result), tech_stack=tech_stack)
+                
                 return result
                 
             except json.JSONDecodeError as e:

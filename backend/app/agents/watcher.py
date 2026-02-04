@@ -130,10 +130,41 @@ class WatcherAgent:
         # Step 2: Start server
         start_result = await runner.start_frontend()
         if not start_result["success"]:
+            # SMART ANALYSIS: Use Tester Agent to diagnose the startup failure
+            from app.agents.tester import TesterAgent
+            tester_agent = TesterAgent()
+            
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "⚠️ Server failed to start. Analyzing logs with Tester..."})
+            
+            # Simple context for tester
+            context = {"projectType": "frontend", "tech_stack": "Next.js/React"} 
+            analysis = await tester_agent.analyze_execution(start_result["error"], context)
+            
+            # Use specific issues if found, otherwise raw error
+            analysis_issues = analysis.get("issues", [])
+            analysis_fixes = analysis.get("fixes", [])
+            
+            errors = []
+            
+            # 1. Add formatted file errors (CRITICAL for Virtuoso surgical repair)
+            for fix in analysis_fixes:
+                if fix.get("file"):
+                    # Pass the full structured fix object to Virtuoso
+                    errors.append(fix)
+            
+            # 2. Add general issues if no specific file fixes found, or as supplementary info
+            if analysis_issues:
+                # Add strings as well for context
+                errors.extend(analysis_issues)
+                
+            # 3. Fallback to raw log if nothing else
+            if not errors:
+                errors = [start_result["error"]]
+                
             return {
                 "status": "FAIL", 
                 "phase": "startup",
-                "errors": [start_result["error"]],
+                "errors": errors, 
                 "fix_this": True
             }
         
@@ -142,6 +173,32 @@ class WatcherAgent:
         # Step 3: Verify in browser
         try:
             result = await self.verify_page(start_result["url"])
+            
+            # SMART ANALYSIS: If browser verification failed, analyze those errors too
+            if result["status"] == "FAIL":
+                from app.agents.tester import TesterAgent
+                tester_agent = TesterAgent()
+                
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "⚠️ Browser set off alarms. Analyzing runtime errors..."})
+                
+                # Combine console logs and page errors
+                error_context = "\n".join(result["errors"])
+                context = {"projectType": "frontend", "tech_stack": "Next.js/React", "phase": "browser_runtime"}
+                
+                analysis = await tester_agent.analyze_execution(error_context, context)
+                
+                # Merge structured fixes into result
+                analysis_fixes = analysis.get("fixes", [])
+                
+                # Append structured fixes to the errors list
+                for fix in analysis_fixes:
+                    if fix.get("file"):
+                         result["errors"].append(fix)
+                         
+                # If we found specific fixes, we might want to prioritize them
+                if analysis_fixes:
+                     await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"🕵️ Tester identified {len(analysis_fixes)} specific fixes."})
+
         finally:
             # Always cleanup
             runner.cleanup()
@@ -160,27 +217,51 @@ class WatcherAgent:
         # For Next.js apps, there's no index.html - we need to check the files exist
         
         from app.core.filesystem import BASE_PROJECTS_DIR
-        project_path = BASE_PROJECTS_DIR / project_id / "frontend" / "app"
         
-        if not project_path.exists():
+        frontend_dir = BASE_PROJECTS_DIR / project_id / "frontend"
+        
+        # Check standard frontend paths
+        nextjs_path = frontend_dir / "app" / "page.tsx"
+        vite_idx = frontend_dir / "index.html"
+        vite_src = frontend_dir / "src" / "App.jsx"
+        vite_src_tsx = frontend_dir / "src" / "App.tsx"
+        
+        is_nextjs = nextjs_path.exists()
+        is_vite = vite_idx.exists() or vite_src.exists() or vite_src_tsx.exists()
+        
+        if not (is_nextjs or is_vite):
+            # Fallback: Check if files are at root (common mistake)
+            root_dir = BASE_PROJECTS_DIR / project_id
+            if (root_dir / "index.html").exists():
+                 return {
+                    "status": "FAIL",
+                    "errors": ["Files generated at root instead of /frontend directory"],
+                    "fix_this": True
+                }
+            
             return {
                 "status": "FAIL",
-                "errors": ["Frontend app directory not found"],
+                "errors": ["Valid frontend structure not found (Missing app/page.tsx or src/App.jsx)"],
                 "fix_this": True
             }
         
-        page_file = project_path / "page.tsx"
-        if not page_file.exists():
-            return {
-                "status": "FAIL",
-                "errors": ["Main page.tsx not found"],
-                "fix_this": True
-            }
+        # Determine strict check path
+        check_path = frontend_dir
+        if is_nextjs:
+            check_path = frontend_dir / "app"
+        elif is_vite:
+             check_path = frontend_dir / "src"
+             
+        # Check for obvious syntax errors in the files
         
         # Check for obvious syntax errors in the files
+        # Check for obvious syntax errors in the files
         errors = []
-        for tsx_file in project_path.glob("*.tsx"):
-            content = tsx_file.read_text(encoding='utf-8', errors='ignore')
+        # Support both .tsx and .jsx check
+        files_to_check = list(check_path.glob("*.tsx")) + list(check_path.glob("*.jsx"))
+        
+        for code_file in files_to_check:
+            content = code_file.read_text(encoding='utf-8', errors='ignore')
             
             # Basic syntax checks
             if content.count('{') != content.count('}'):

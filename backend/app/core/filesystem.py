@@ -99,3 +99,19 @@ def archive_project(project_id: str) -> str:
     # Create zip (shutil adds .zip extension automatically)
     archive_path = shutil.make_archive(str(zip_base), 'zip', root_dir=str(project_dir))
     return archive_path
+
+def organize_files(filenames):
+    """
+    Organize files into a nested dictionary structure.
+    Optimized to O(n*m) complexity instead of O(n*m*k).
+    """
+    organized = {}
+    for name in filenames:
+        parts = name.split('/')
+        current_level = organized
+        for part in parts:
+            if part not in current_level:
+                current_level[part] = {}
+            current_level = current_level[part]
+    return organized
+

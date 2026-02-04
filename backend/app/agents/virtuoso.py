@@ -86,7 +86,20 @@ RULES:
 2. Production-ready, complete code
 3. Include all imports
 4. Proper JSON escaping
-5. Return ONLY the JSON object
+6. INTELLIGENT DEPENDENCY MANAGEMENT:
+   - You MUST generate a 'package.json' tailored to the specific Tech Stack.
+   - USE "latest" for versions if unsure. DO NOT hallucinate specific version numbers like "5.9.3".
+   - IF using Tailwind CSS: You MUST include 'tailwindcss', 'postcss', 'autoprefixer'.
+   - IF using Next.js: 
+        - Use minimal config: 'module.exports = {{ reactStrictMode: true }};'
+        - DO NOT add custom 'webpack' rules unless explicitly requested (avoids Turbopack conflicts).
+        - 'frontend/app/layout.tsx' MUST include <html> and <body> tags wrapping children.
+        - STRICTLY forbid Vue syntax (<script setup>, ref from 'vue') in .tsx files. Use React useState/useEffect.
+        - ALL Page components (page.tsx) MUST have an 'export default function'.
+        - Next.js pages MUST be in 'frontend/app/' directory (e.g. 'frontend/app/page.tsx'), NOT 'frontend/src/'.
+        - IMPORTANT: If using hooks (useState) in 'page.tsx', you MUST add "use client"; at the TOP of the file.
+   - Do NOT assume any dependencies are pre-installed. You are the sole dependency manager.
+7. Return ONLY the JSON object
 """
         
         max_attempts = 3
@@ -144,15 +157,129 @@ Description: {desc}
 Context: {context}
 
 Return ONLY the code, no markdown blocks.
+
+CRITICAL RULES:
+1. IF generating 'package.json': Include 'autoprefixer', 'postcss', 'tailwindcss' in devDependencies if using Tailwind.
+2. IF generating 'next.config.js': Use CommonJS 'module.exports = {{ reactStrictMode: true }};'
+3. IF generating 'frontend/app/layout.tsx': MUST include <html> and <body> tags.
 """
             
             try:
                 code = await client.generate(prompt)
                 # Clean markdown
-                code = code.replace("```python", "").replace("```typescript", "")
-                code = code.replace("```tsx", "").replace("```", "").strip()
+                # Clean markdown and common identifiers
+                code = code.replace("```python", "").replace("```typescript", "").replace("```javascript", "").replace("```js", "").replace("```ts", "")
+                code = code.replace("```tsx", "").replace("```json", "").replace("```", "").strip()
+                
+                # Extra safety: Remove bare language identifiers at start of file if present (common LLM artifact)
+                for lang in ["javascript", "typescript", "python", "json", "tsx", "jsx", "js", "ts"]:
+                     if re.match(f"^{lang}\\s+", code, re.IGNORECASE):
+                          code = re.sub(f"^{lang}\\s+", "", code, flags=re.IGNORECASE).strip()
                 files[path] = code
             except Exception as e:
                 files[path] = f"# Error generating {path}: {e}"
-            
+        
         return files
+            
+    async def repair_files(self, existing_files: dict, errors: list) -> dict:
+        """
+        SMART REPAIR: Fixes files based on error list or structured fix plans.
+        """
+        from app.core.local_model import HybridModelClient
+        from app.core.socket_manager import SocketManager
+        
+        client = HybridModelClient()
+        sm = SocketManager()
+        
+        files_to_fix = {} # path -> instruction
+        
+        # 1. Parse Errors/Fixes
+        for item in errors:
+            # Case A: Structured Fix (from TesterAgent)
+            if isinstance(item, dict) and "file" in item and "change" in item:
+                path = item["file"]
+                instruction = item["change"]
+                # Normalize path
+                if path.startswith("/"): path = path[1:]
+                files_to_fix[path] = instruction
+                
+            # Case B: String Error (Legacy/Raw)
+            elif isinstance(item, str):
+                # Try to extract file path using regex or fuzzy match
+                # Regex "FILE: <path> - <instruction>"
+                match = re.search(r"FILE:\s*([^\s]+)\s*-\s*(.*)", item, re.IGNORECASE)
+                if match:
+                    path = match.group(1).strip()
+                    instruction = match.group(2).strip()
+                    files_to_fix[path] = instruction
+                else:
+                    # Fallback: fuzzy match against existing files
+                    for existing_path in existing_files.keys():
+                        if existing_path in item or existing_path.split("/")[-1] in item:
+                            files_to_fix[existing_path] = f"Fix error: {item}"
+                            
+        if not files_to_fix:
+             await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": "⚠️ Could not identify specific files to fix. Retrying entire batch..."})
+             return await self.sequential_generate_files([{"path": p} for p in existing_files], f"Fix errors: {errors}")
+
+        await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"🔧 Patching {len(files_to_fix)} files: {list(files_to_fix.keys())}"})
+        
+        repaired_files = existing_files.copy()
+        
+        for path, instruction in files_to_fix.items():
+            # If path not in existing, it might be a new file suggestion
+            original_code = existing_files.get(path, "")
+            
+            prompt = f"""
+START REPAIR MISSION
+TARGET: {path}
+INSTRUCTION: {instruction}
+
+ORIGINAL CODE:
+{original_code}
+
+TASK: Return the FIXED code for this file.
+RULES:
+1. Apply the instruction precisely.
+2. Maintain existing functionality.
+3. Return ONLY the code.
+4. IF fixing 'next.config.js', ensure 'module.exports = {{ ... }}'.
+5. IF fixing 'page.tsx', ensure NO Vue syntax (<script setup>) is used. Use React.
+6. IF using React Hooks (useState, useEffect) in Next.js App Router, YOU MUST add 'use client'; at the very top.
+"""
+            try:
+                new_code = await client.generate(prompt)
+                # Clean
+                # Clean markdown and common identifiers
+                new_code = new_code.replace("```python", "").replace("```typescript", "").replace("```javascript", "").replace("```js", "").replace("```ts", "")
+                new_code = new_code.replace("```tsx", "").replace("```json", "").replace("```", "").strip()
+                
+                # Extra safety: Remove bare language identifiers at start of file
+                for lang in ["javascript", "typescript", "python", "json", "tsx", "jsx", "js", "ts"]:
+                     if re.match(f"^{lang}\\s+", new_code, re.IGNORECASE):
+                          new_code = re.sub(f"^{lang}\\s+", "", new_code, flags=re.IGNORECASE).strip()
+                
+                # OPTIMIZATION: Validate JSON immediately if fixing a JSON file
+                if path.endswith(".json"):
+                    try:
+                        json.loads(new_code)
+                    except json.JSONDecodeError:
+                        # Attempt to sanitize (extract from first { to last })
+                        try:
+                            match = re.search(r"(\{.*\})", new_code, re.DOTALL)
+                            if match:
+                                san_code = match.group(1)
+                                json.loads(san_code) # Verify again
+                                new_code = san_code
+                            else:
+                                raise ValueError("Generated code is not valid JSON")
+                        except Exception as json_err:
+                            await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"⚠️ Generated invalid JSON for {path}. Skipping save."})
+                            continue # Skip processing this bad file
+                            
+                repaired_files[path] = new_code
+                await sm.emit("file_generated", {"path": path, "content": new_code, "status": "repaired"})
+            except Exception as e:
+                await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"Failed to patch {path}: {e}"})
+                
+        return repaired_files

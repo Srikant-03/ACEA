@@ -1,20 +1,20 @@
 from app.core.config import settings
-from app.core.key_manager import KeyManager
+import json
 
 class AdvisorAgent:
     def __init__(self):
-        self.km = KeyManager()
+        pass
 
     async def analyze_deployment(self, project_details: dict) -> dict:
         """
         Recommends deployment strategies and estimates costs.
         """
-        from app.core.key_manager import KeyManager
-        km = KeyManager()
+        from app.core.local_model import HybridModelClient
+        client = HybridModelClient()
         
         prompt = f"""
         You are The Deployment Advisor.
-        Analyze the following project and recommend a deployment strategy (Vercel, Railway, etc.).
+        Analyze the following project and recommend a deployment strategy.
         
         Project:
         {project_details}
@@ -27,12 +27,7 @@ class AdvisorAgent:
         }}
         """
         try:
-            client = km.get_client()
-            response = await client.aio.models.generate_content(
-                model='gemini-2.5-pro',
-                contents=prompt
-            )
-            # Basic JSON parsing or string return
-            return {"recommendation": response.text}
+            response = await client.generate(prompt, json_mode=True)
+            return json.loads(response)
         except Exception as e:
             return {"error": str(e)}

@@ -29,7 +29,7 @@ class ExecutionService:
         self.docker_client = None
         self.active_containers: Dict[str, str] = {}  # project_id -> container_id
         self.active_sandboxes: Dict[str, dict] = {}  # project_id -> {sandbox_id, urls}
-        self.simulated_logs: Dict[str, str] = {}     # project_id -> logs
+        self.simulated_logs: Dict[str, List[str]] = {}     # project_id -> list of log lines
         self.execution_method: Dict[str, str] = {}   # project_id -> "codesandbox"|"docker"|"simulated"
         
         if DOCKER_AVAILABLE:
@@ -218,7 +218,7 @@ To enable real execution:
 1. CodeSandbox: Ensure internet connectivity
 2. Docker: Install and start Docker Desktop
 """
-        self.simulated_logs[project_id] = logs
+        self.simulated_logs[project_id] = [logs]
         
         return {
             "status": "simulated",
@@ -280,10 +280,11 @@ To enable real execution:
         
         else:
             if project_id in self.simulated_logs:
-                log_lines = self.simulated_logs[project_id].split('\n')
-                if len(log_lines) < 25:
-                    self.simulated_logs[project_id] += f"[SIM] Activity at {time.strftime('%H:%M:%S')}...\n"
-                return self.simulated_logs[project_id]
+                # Add timestamp if it's been a while (mocking activity)
+                current_logs = self.simulated_logs[project_id]
+                if len(current_logs) < 50: # Limit simulation output
+                     self.simulated_logs[project_id].append(f"[SIM] Activity at {time.strftime('%H:%M:%S')}...\n")
+                return "".join(self.simulated_logs[project_id])
             return "No execution active for this project."
     
     def stop_execution(self, project_id: str) -> bool:

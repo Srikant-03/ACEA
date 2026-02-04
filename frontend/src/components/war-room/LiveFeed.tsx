@@ -2,16 +2,13 @@
 
 import { useEffect, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
+import { LogEntry } from "@/types/socket"
 
-interface Log {
-    id: string
-    agent: string
-    message: string
-    timestamp: string
-    type: "info" | "success" | "warning" | "error"
+interface LiveFeedProps {
+    logs: LogEntry[]
 }
 
-export function LiveFeed({ logs }: { logs: Log[] }) {
+export function LiveFeed({ logs }: LiveFeedProps) {
     const bottomRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
@@ -34,8 +31,12 @@ export function LiveFeed({ logs }: { logs: Log[] }) {
                             animate={{ opacity: 1, x: 0 }}
                             className="flex gap-3 text-xs"
                         >
-                            <span className="text-slate-600 shrink-0">{log.timestamp}</span>
-                            <span className="text-cyan-500 w-20 shrink-0 font-bold">[{log.agent}]</span>
+                            <span className="text-slate-600 shrink-0">
+                                {log.timestamp instanceof Date ? log.timestamp.toLocaleTimeString() : log.timestamp}
+                            </span>
+                            <span className={`w-20 shrink-0 font-bold ${log.agent === "SYSTEM" ? "text-purple-400" :
+                                    log.agent === "ERROR" ? "text-red-500" : "text-cyan-500"
+                                }`}>[{log.agent}]</span>
                             <span className={
                                 log.type === 'error' ? 'text-red-400' :
                                     log.type === 'success' ? 'text-green-400' :

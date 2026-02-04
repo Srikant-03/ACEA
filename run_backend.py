@@ -30,7 +30,16 @@ if __name__ == "__main__":
         else:
             print(f"⚠️ Warning: Virtual environment not found at {VENV_PYTHON}. Running with system Python.")
 
-    # 2. Start Server
+    # 2. Fix Windows Asyncio Loop
+    # Windows default ProactorEventLoop is required for Playwright subprocesses.
+    # Previous attempt to use SelectorEventLoop caused NotImplementedError.
+    # We revert to default behavior.
+    if sys.platform == 'win32':
+        # Ensure we are using Proactor (default in 3.12, but being explicit doesn't hurt if issues persist)
+        import asyncio
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+    # 3. Start Server
     print("🚀 Starting ACEA Sentinel Backend...")
     print(f"🐍 Python: {sys.executable}")
     
@@ -43,5 +52,8 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
         reload_dirs=["backend"],
-        app_dir="."
+        app_dir=".",
+        log_level="warning",
+        access_log=False,
+        loop="asyncio"  # FORCE use of standard asyncio loop (Proactor on Windows)
     )

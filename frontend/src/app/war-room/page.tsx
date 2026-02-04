@@ -7,16 +7,29 @@ import { Brain, Code, Shield, Eye, Database, Rocket, Laptop, X, Play, Square, Bu
 import { socket } from "@/lib/socket"
 import { FileExplorer } from "@/components/ide/FileExplorer"
 import { CodeEditor } from "@/components/ide/CodeEditor"
+import type {
+    AgentLog,
+    AgentStatusUpdate,
+    MissionAccepted,
+    MissionComplete,
+    MissionError,
+    GenerationStarted,
+    FileGenerated,
+    LogEntry,
+    AgentsState,
+    LogLevel
+} from "@/types/socket"
 
 export default function WarRoomPage() {
-    const [logs, setLogs] = useState<any[]>([])
-    const [agents, setAgents] = useState<any>({
+    const [logs, setLogs] = useState<LogEntry[]>([])
+    const [agents, setAgents] = useState<AgentsState>({
         ARCHITECT: "idle",
         VIRTUOSO: "idle",
         SENTINEL: "idle",
         ORACLE: "idle",
         WATCHER: "idle",
-        ADVISOR: "idle"
+        ADVISOR: "idle",
+        SYSTEM: "idle"
     })
     const [prompt, setPrompt] = useState("")
     const [techStack, setTechStack] = useState("Auto-detect")
@@ -42,13 +55,13 @@ export default function WarRoomPage() {
         })
 
         // Listen for agent logs
-        socket.on("agent_log", (data: any) => {
+        socket.on("agent_log", (data: AgentLog) => {
             addLog(data.agent_name, data.message, "info")
         })
 
         // Listen for agent status updates
-        socket.on("agent_status", (data: any) => {
-            setAgents((prev: any) => ({ ...prev, [data.agent_name]: data.status }))
+        socket.on("agent_status", (data: AgentStatusUpdate) => {
+            setAgents((prev: AgentsState) => ({ ...prev, [data.agent_name]: data.status }))
         })
 
         // Listen for Mission Acceptance (Gets Project ID early)
@@ -58,7 +71,7 @@ export default function WarRoomPage() {
         })
 
         // Listen for completion
-        socket.on("mission_complete", (data: any) => {
+        socket.on("mission_complete", (data: MissionComplete) => {
             setIsProcessing(false)
             addLog("SYSTEM", "Mission Objective Complete", "success")
 
@@ -123,12 +136,12 @@ export default function WarRoomPage() {
         }
     }
 
-    const addLog = (agent: string, message: string, type: "info" | "success" | "warning" | "error") => {
+    const addLog = (agent: string, message: string, type: LogLevel) => {
         setLogs(prev => [...prev.slice(-49), {
             id: Date.now().toString() + Math.random(),
             agent,
             message,
-            timestamp: new Date().toLocaleTimeString(),
+            timestamp: new Date(),
             type
         }])
     }

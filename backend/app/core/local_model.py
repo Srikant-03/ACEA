@@ -28,7 +28,8 @@ class OllamaClient:
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"{self.base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=2)) as resp:
                     return resp.status == 200
-        except:
+        except Exception as e:
+            # Silent check, just return False
             return False
     
     async def list_models(self) -> list:
@@ -39,8 +40,10 @@ class OllamaClient:
                     if resp.status == 200:
                         data = await resp.json()
                         return [m["name"] for m in data.get("models", [])]
-        except:
-            pass
+        except Exception as e:
+            # We can't use SocketManager here easily as it might be circular or too noisy
+            # But we should at least print to stderr or return empty
+            print(f"Ollama list_models error: {e}")
         return []
     
     async def generate(self, prompt: str, model: Optional[str] = None, json_mode: bool = False) -> str:
@@ -211,8 +214,8 @@ class HybridModelClient:
                     try:
                         model = await self.ollama.select_best_model()
                         await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"Selected model: {model}"})
-                    except:
-                        pass
+                    except Exception as e:
+                        await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"⚠️ Local model select error: {e}"})
                     
                     return await self.ollama.generate(prompt, json_mode=json_mode)
                 else:

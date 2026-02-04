@@ -78,9 +78,26 @@ async def download_project_route(project_id: str):
         filename=f"{project_id}.zip"
     )
 
+from pydantic import BaseModel, Field, validator
+
 class GenerateRequest(BaseModel):
-    prompt: str
-    tech_stack: str = "Auto-detect"
+    prompt: str = Field(..., min_length=10, max_length=5000)
+    tech_stack: str = Field(default="Auto-detect")
+
+    @validator('prompt')
+    def validate_prompt(cls, v):
+        if not v.strip():
+            raise ValueError('Prompt cannot be empty')
+        return v.strip()
+
+    @validator('tech_stack')
+    def validate_tech_stack(cls, v):
+        allowed = ['React', 'Vue', 'Vanilla JS', 'Auto-detect', 'Next.js + FastAPI', 'React + Node.js', 'Vue + Python', 'Vanilla HTML/JS', 'Python Script']
+        if v not in allowed:
+            # Flexible warning or strict error? Let's be strict for known ones but maybe allow custom for future
+             pass # For now, just allow it or log. Let's strictly return trimmed
+        return v
+
 
 @router.post("/generate")
 async def generate_project_route(request: GenerateRequest):
@@ -120,48 +137,71 @@ def _load_blueprint(project_id: str) -> dict:
 
 @router.post("/execute/{project_id}")
 async def execute_project_route(project_id: str):
-    """Execute project using CodeSandbox (default) or Docker (fallback)."""
-    docker_service = get_docker_service()
-    blueprint = _load_blueprint(project_id)
+    """Execute project locally using ProjectRunner."""
+    from app.core.project_runner import ProjectRunner
+    from app.core.filesystem import BASE_PROJECTS_DIR
     
-    # execute_project is now async
-    result = await docker_service.execute_project(project_id, blueprint)
+    # Check if instance already exists
+    runner = ProjectRunner.get_instance(project_id)
+    if not runner:
+        project_path = str(BASE_PROJECTS_DIR / project_id)
+        runner = ProjectRunner(project_path, project_id)
     
+    # Setup and Start
+    setup = await runner.setup_frontend()
+    if not setup["success"]:
+        return {"status": "error", "logs": f"Setup failed: {setup.get('error')}"}
+        
+    start = await runner.start_frontend()
+    if not start["success"]:
+        return {"status": "error", "logs": f"Start failed: {start.get('error')}"}
+        
     return {
-        "status": result["status"],
-        "logs": result["logs"],
-        "preview_url": result.get("preview_url"),
-        "embed_url": result.get("embed_url"),
-        "execution_method": result.get("execution_method"),
-        "container_id": result.get("container_id")
+        "status": "running",
+        "logs": runner.get_captured_logs(),
+        "preview_url": start.get("url"),
+        "container_id": project_id
     }
 
 @router.get("/logs/{project_id}")
 async def get_logs_route(project_id: str):
-    """Get real-time logs from running execution."""
-    docker_service = get_docker_service()
-    logs = docker_service.get_logs(project_id)
-    return {"logs": logs}
+    """Get real-time logs from running process."""
+    from app.core.project_runner import ProjectRunner
+    
+    runner = ProjectRunner.get_instance(project_id)
+    if runner:
+        return {"logs": runner.get_captured_logs()}
+    return {"logs": "Process not running."}
 
 @router.post("/stop/{project_id}")
 async def stop_project_route(project_id: str):
-    """Stop running execution."""
-    docker_service = get_docker_service()
-    success = docker_service.stop_execution(project_id)
-    return {"status": "stopped" if success else "not_found"}
+    """Stop running process."""
+    from app.core.project_runner import ProjectRunner
+    
+    runner = ProjectRunner.get_instance(project_id)
+    if runner:
+        runner.stop_frontend()
+        return {"status": "stopped"}
+    return {"status": "not_found"}
 
 @router.post("/debug/{project_id}")
 async def debug_project_route(project_id: str):
-    """Analyze execution logs and suggest fixes."""
+    """Analyze execution logs and suggest fixes using ProjectRunner logs."""
     from app.agents.tester import TesterAgent
+    from app.core.project_runner import ProjectRunner
     
-    docker_service = get_docker_service()
     tester = TesterAgent()
-    
-    # Get logs
-    logs = docker_service.get_container_logs(project_id)
     blueprint = _load_blueprint(project_id)
     
+    # Get logs from local runner
+    logs = ""
+    runner = ProjectRunner.get_instance(project_id)
+    if runner:
+        logs = runner.get_captured_logs()
+    
+    if not logs:
+        logs = "No execution logs available. The server may not have started."
+
     # Analyze
     result = await tester.analyze_execution(logs, blueprint)
     

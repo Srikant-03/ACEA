@@ -2,29 +2,32 @@ import subprocess
 import os
 import sys
 from app.core.config import settings
-from app.core.key_manager import KeyManager
-
 class OracleAgent:
     def __init__(self):
-        self.km = KeyManager()
+        pass
 
     async def generate_tests(self, code: str, language: str = "python") -> str:
         """
-        Generates test code using Gemini.
+        Generates test code using Gemini via HybridModelClient.
         """
-        from app.core.key_manager import KeyManager
-        km = KeyManager()
+        from app.core.local_model import HybridModelClient
+        client = HybridModelClient()
         
-        prompt = f"Generate {language} unit tests for this code using pytest/vitest. Return ONLY code:\n{code}"
+        prompt = f"Generate {language} unit tests for this code using pytest/vitest. Return ONLY code, no markdown blocks:\n{code}"
         try:
-            client = km.get_client()
-            response = await client.aio.models.generate_content(
-                model='gemini-2.0-flash', 
-                contents=prompt
-            )
-            return response.text.replace("```python", "").replace("```", "").strip()
-        except:
-            return ""
+            response = await client.generate(prompt)
+            # Clean markdown and common identifiers
+            code = response.replace("```python", "").replace("```typescript", "").replace("```javascript", "").replace("```", "").strip()
+            
+            # Extra safety: Remove bare language identifiers
+            import re
+            for lang in ["python", "pytest", "javascript", "typescript"]:
+                if re.match(f"^{lang}\\s+", code, re.IGNORECASE):
+                    code = re.sub(f"^{lang}\\s+", "", code, flags=re.IGNORECASE).strip()
+            
+            return code
+        except Exception as e:
+            return f"# Error generating tests: {e}"
 
     async def run_tests(self, project_path: str) -> dict:
         """

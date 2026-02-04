@@ -32,42 +32,46 @@ class TesterAgent:
         await sm.emit("agent_log", {"agent_name": "TESTER", "message": "Analyzing execution logs..."})
         
         prompt = f"""
-You are an expert debugger. Analyze these execution logs and identify issues.
+You are an expert software debugger. Analyze the execution logs and identify the root cause of the failure.
 
-Project Type: {blueprint.get('projectType', 'unknown')}
-Tech Stack: {blueprint.get('tech_stack', 'unknown')}
+**PROJECT CONTEXT**:
+- Project Type: {blueprint.get('projectType', 'unknown')}
+- Tech Stack: {blueprint.get('tech_stack', 'unknown')}
 
-Execution Logs:
-{logs[:3000]}
+**EXECUTION LOGS**:
+{logs[:5000]}
 
-Analyze and output JSON:
+**TASK**:
+1. Identify the specific file(s) causing the error.
+2. Provide a concrete fix instruction for each file.
+3. Classify the error type (Syntax, Runtime, Configuration, Missing Dependency).
+
+**OUTPUT FORMAT**:
+Return valid JSON only. No markdown.
 {{
-  "status": "pass|fail",
+  "status": "fail",
   "issues": [
-    "Description of issue 1",
-    "Description of issue 2"
-  ],
-  "suggestions": [
-    "How to fix issue 1",
-    "How to fix issue 2"
+    "Brief description of issue 1",
+    "Brief description of issue 2"
   ],
   "fixes": [
     {{
-      "file": "filename.ext",
-      "change": "Description of the change needed"
+      "file": "path/to/file.ext",
+      "change": "Detailed instruction on how to fix the code. Be specific about what to change."
+    }},
+    {{
+      "file": "frontend/package.json",
+      "change": "Add 'dependency-name': '^1.0.0' to dependencies"
     }}
   ]
 }}
 
-Focus on:
-- Runtime errors
-- Missing dependencies
-- Syntax errors
-- Configuration issues
-- Port binding issues
-
-If logs show successful execution, return status: "pass" with empty issues.
-Return ONLY the JSON object.
+**RULES**:
+- If a file is missing, suggest creating it.
+- If a dependency is missing, strict "package.json" as the file to fix.
+- If the error is obscure, look for "Caused by" or "Stack trace" lines.
+- If logs show keys/secrets missing, suggest adding to .env.
+- If logs show successful execution (server running, listening on port), return status: "pass".
 """
         
         try:
