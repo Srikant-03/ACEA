@@ -16,7 +16,7 @@ async def lifespan(app: FastAPI):
     # Shutdown logic if needed
 
 # Initialize FastAPI app
-app = FastAPI(
+fastapi_app = FastAPI(
     title="ACEA Sentinel API",
     description="Backend API for ACEA Sentinel Autonomous Software Engineering Platform",
     version="1.0.0",
@@ -29,7 +29,7 @@ origins = [
     "http://127.0.0.1:3000",
 ]
 
-app.add_middleware(
+fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
@@ -46,7 +46,7 @@ from app import event_handlers
 
 # Include API Router
 from app.api import endpoints
-app.include_router(endpoints.router, prefix="/api")
+fastapi_app.include_router(endpoints.router, prefix="/api")
 
 # Mount Static Files (Generated Projects)
 from fastapi.staticfiles import StaticFiles
@@ -54,21 +54,24 @@ import os
 
 PROJECTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_projects")
 os.makedirs(PROJECTS_DIR, exist_ok=True)
-app.mount("/preview", StaticFiles(directory=PROJECTS_DIR, html=True), name="preview")
+fastapi_app.mount("/preview", StaticFiles(directory=PROJECTS_DIR, html=True), name="preview")
 
 # Mount Screenshots for Visual Verification
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "screenshots")
 os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-app.mount("/screenshots", StaticFiles(directory=SCREENSHOTS_DIR), name="screenshots")
+fastapi_app.mount("/screenshots", StaticFiles(directory=SCREENSHOTS_DIR), name="screenshots")
 
-# Finalize Socket App
-socket_app = socketio.ASGIApp(sio, app)
+# Finalize Socket App - Wrap FastAPI with Socket.IO
+# This ensures socket.io paths are handled first
+app = socketio.ASGIApp(sio, fastapi_app)
 
-# Health endpoints
-@app.get("/")
+# Health endpoints need to be attached to the inner FastAPI app
+@fastapi_app.get("/")
 async def root():
     return {"message": "ACEA Sentinel System Online", "status": "active"}
 
-@app.get("/health")
+@fastapi_app.get("/health")
 async def health_check():
     return {"status": "healthy", "services": {"database": "unknown", "redis": "unknown"}}
+
+

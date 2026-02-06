@@ -65,7 +65,7 @@ class WatcherAgent:
                 await browser.close()
         
         except ImportError:
-            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "⚠️ Playwright not installed. Skipping browser test."})
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Playwright not installed. Skipping browser test."})
             return {
                 "status": "SKIPPED",
                 "reason": "Playwright not installed",
@@ -81,7 +81,7 @@ class WatcherAgent:
         all_errors = errors + [err["text"] for err in console_errors]
         
         if all_errors:
-            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"❌ Found {len(all_errors)} errors"})
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Found {len(all_errors)} errors"})
             for err in all_errors[:3]:  # Show first 3 errors
                 await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"  → {err[:100]}"})
             
@@ -93,7 +93,7 @@ class WatcherAgent:
                 "fix_this": True
             }
         else:
-            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "✅ Page loaded successfully!"})
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Page loaded successfully!"})
             return {
                 "status": "PASS",
                 "errors": [],
@@ -105,12 +105,59 @@ class WatcherAgent:
     async def run_and_verify_project(self, project_path: str, project_id: str) -> Dict[str, Any]:
         """
         Full verification: Install deps, run server, open browser, check for errors.
-        This is the REAL self-healing entry point.
+        For STATIC HTML projects (no package.json), skip npm and just validate files.
         """
         from app.core.socket_manager import SocketManager
-        from app.core.project_runner import ProjectRunner
+        from pathlib import Path
+        import glob
         
         sm = SocketManager()
+        project_path_obj = Path(project_path)
+        frontend_path = project_path_obj / "frontend"
+        
+        # STATIC HTML DETECTION: Check multiple locations for package.json and HTML files
+        package_json_paths = [
+            frontend_path / "package.json",
+            project_path_obj / "package.json",
+            frontend_path / "app" / "package.json"
+        ]
+        has_package_json = any(p.exists() for p in package_json_paths)
+        
+        # Check for HTML files in multiple locations
+        html_paths = [
+            project_path_obj / "index.html",
+            frontend_path / "index.html",
+            frontend_path / "app" / "index.html"
+        ]
+        # Also check if there are ANY .html files anywhere
+        all_html_files = list(project_path_obj.rglob("*.html"))
+        has_html = any(p.exists() for p in html_paths) or len(all_html_files) > 0
+        
+        # STATIC HTML PROJECT: Skip npm entirely, just validate files exist
+        if has_html and not has_package_json:
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "📄 Static HTML project detected. Skipping npm."})
+            
+            # Find any HTML file
+            html_file = None
+            for path in html_paths:
+                if path.exists():
+                    html_file = path
+                    break
+            if not html_file and all_html_files:
+                html_file = all_html_files[0]
+            
+            if html_file:
+                content = html_file.read_text(encoding='utf-8', errors='ignore')
+                if len(content) < 20:
+                    return {"status": "FAIL", "phase": "validation", "errors": ["HTML file is too short"], "fix_this": True}
+                
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "✅ Static HTML validated successfully!"})
+                return {"status": "PASS", "phase": "validation", "errors": [], "fix_this": False}
+            else:
+                return {"status": "FAIL", "phase": "validation", "errors": ["No HTML files found"], "fix_this": True}
+        
+        # NODE/REACT PROJECT: Continue with npm
+        from app.core.project_runner import ProjectRunner
         runner = ProjectRunner(project_path)
         
         await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Setting up project for verification..."})
@@ -179,7 +226,7 @@ class WatcherAgent:
                 from app.agents.tester import TesterAgent
                 tester_agent = TesterAgent()
                 
-                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "⚠️ Browser set off alarms. Analyzing runtime errors..."})
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Browser set off alarms. Analyzing runtime errors..."})
                 
                 # Combine console logs and page errors
                 error_context = "\n".join(result["errors"])
@@ -197,7 +244,7 @@ class WatcherAgent:
                          
                 # If we found specific fixes, we might want to prioritize them
                 if analysis_fixes:
-                     await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"🕵️ Tester identified {len(analysis_fixes)} specific fixes."})
+                     await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Tester identified {len(analysis_fixes)} specific fixes."})
 
         finally:
             # Always cleanup
@@ -272,14 +319,14 @@ class WatcherAgent:
                 errors.append(f"{tsx_file.name}: Contains escaped newlines (file format issue)")
         
         if errors:
-            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"❌ Found {len(errors)} file issues"})
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Found {len(errors)} file issues"})
             return {
                 "status": "FAIL",
                 "errors": errors,
                 "fix_this": True
             }
         
-        await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "✅ Files validated successfully"})
+        await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Files validated successfully"})
         return {
             "status": "PASS",
             "errors": [],

@@ -15,8 +15,8 @@ class OllamaClient:
         self.base_url = base_url
         # Best models for 12GB VRAM, ordered by preference
         self.models = [
-            "qwen2.5-coder:14b",      # Best coding quality
-            "qwen2.5-coder:7b",       # Faster fallback
+            "qwen2.5-coder:7b",      # Best coding quality
+            "qwen2.5-coder:3b",       # Faster fallback
             "codellama:13b",          # Alternative
             "deepseek-coder:6.7b-instruct-q4_K_M",  # If available
         ]

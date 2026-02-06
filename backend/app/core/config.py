@@ -13,8 +13,15 @@ class Settings(BaseSettings):
     # Gemini API
     GEMINI_API_KEYS: str = ""  # Comma separated
     
-    # CodeSandbox API
+    # CodeSandbox API (deprecated - using Daytona now)
     CODESANDBOX_API_KEY: str = ""
+    
+    # Daytona SDK - for code execution sandboxes
+    DAYTONA_API_KEY: str = ""
+    
+    # E2B SDK - for cloud code execution sandboxes
+    E2B_API_KEY: str = ""
+    E2B_TIMEOUT: int = 600  # Sandbox timeout in seconds
     
     @property
     def api_keys_list(self) -> List[str]:
@@ -32,11 +39,6 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     # ========== PHASE 3: PRODUCTION CONFIG ==========
-    
-    # Docker
-    ENABLE_DOCKER: bool = True
-    CONTAINER_TIMEOUT: int = 300  # seconds
-    MAX_CONTAINERS: int = 10
     
     # File Storage
     PROJECTS_DIR: str = "/tmp/acea_projects"

@@ -39,6 +39,7 @@ export default function RootLayout({
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} ${orbitron.variable} antialiased`}
+        suppressHydrationWarning
       >
         {children}
       </body>

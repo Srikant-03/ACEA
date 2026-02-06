@@ -122,7 +122,6 @@ async def generate_project_route(request: GenerateRequest):
 
 # ==================== EXECUTION ENDPOINTS ====================
 
-from app.services.docker_service import get_docker_service
 from app.core.filesystem import read_project_files
 import json
 
@@ -137,52 +136,40 @@ def _load_blueprint(project_id: str) -> dict:
 
 @router.post("/execute/{project_id}")
 async def execute_project_route(project_id: str):
-    """Execute project locally using ProjectRunner."""
-    from app.core.project_runner import ProjectRunner
-    from app.core.filesystem import BASE_PROJECTS_DIR
+    """
+    Execute project using E2B cloud sandbox.
+    Creates sandbox, uploads files, installs dependencies, starts app.
+    Returns public preview URL.
+    """
+    from app.services.e2b_service import get_e2b_service
     
-    # Check if instance already exists
-    runner = ProjectRunner.get_instance(project_id)
-    if not runner:
-        project_path = str(BASE_PROJECTS_DIR / project_id)
-        runner = ProjectRunner(project_path, project_id)
+    blueprint = _load_blueprint(project_id)
     
-    # Setup and Start
-    setup = await runner.setup_frontend()
-    if not setup["success"]:
-        return {"status": "error", "logs": f"Setup failed: {setup.get('error')}"}
-        
-    start = await runner.start_frontend()
-    if not start["success"]:
-        return {"status": "error", "logs": f"Start failed: {start.get('error')}"}
-        
-    return {
-        "status": "running",
-        "logs": runner.get_captured_logs(),
-        "preview_url": start.get("url"),
-        "container_id": project_id
-    }
+    # Create E2B sandbox
+    e2b = get_e2b_service()
+    result = await e2b.create_sandbox(project_id, blueprint)
+    
+    return result
 
 @router.get("/logs/{project_id}")
 async def get_logs_route(project_id: str):
-    """Get real-time logs from running process."""
-    from app.core.project_runner import ProjectRunner
+    """Get real-time logs from E2B sandbox."""
+    from app.services.e2b_service import get_e2b_service
     
-    runner = ProjectRunner.get_instance(project_id)
-    if runner:
-        return {"logs": runner.get_captured_logs()}
-    return {"logs": "Process not running."}
+    e2b = get_e2b_service()
+    logs = await e2b.get_logs(project_id)
+    
+    return {"logs": logs, "source": "e2b"}
 
 @router.post("/stop/{project_id}")
 async def stop_project_route(project_id: str):
-    """Stop running process."""
-    from app.core.project_runner import ProjectRunner
+    """Stop E2B sandbox."""
+    from app.services.e2b_service import get_e2b_service
     
-    runner = ProjectRunner.get_instance(project_id)
-    if runner:
-        runner.stop_frontend()
-        return {"status": "stopped"}
-    return {"status": "not_found"}
+    e2b = get_e2b_service()
+    result = await e2b.stop_sandbox(project_id)
+    
+    return {"status": result.get("status", "stopped"), "source": "e2b"}
 
 @router.post("/debug/{project_id}")
 async def debug_project_route(project_id: str):

@@ -7,6 +7,7 @@ import { Brain, Code, Shield, Eye, Database, Rocket, Laptop, X, Play, Square, Bu
 import { socket } from "@/lib/socket"
 import { FileExplorer } from "@/components/ide/FileExplorer"
 import { CodeEditor } from "@/components/ide/CodeEditor"
+import { PreviewPanel } from "@/components/preview/PreviewPanel"
 import type {
     AgentLog,
     AgentStatusUpdate,
@@ -42,11 +43,14 @@ export default function WarRoomPage() {
     const [selectedFile, setSelectedFile] = useState<string | null>(null)
     const [fileList, setFileList] = useState<string[]>([])
 
-    // Execution State
+    // Execution State (E2B only)
     const [executionStatus, setExecutionStatus] = useState<'idle' | 'running' | 'stopped' | 'error'>('idle')
     const [executionLogs, setExecutionLogs] = useState<string>('')
-    const [previewUrl, setPreviewUrl] = useState<string | null>(null)
     const [showPreview, setShowPreview] = useState(false)
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+    const [previewTechStack, setPreviewTechStack] = useState<string>('')
+    const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+    const [loadingStage, setLoadingStage] = useState<string>('Creating sandbox...')
 
     useEffect(() => {
         // Listen for connection
@@ -161,36 +165,45 @@ export default function WarRoomPage() {
     const handleExecute = async () => {
         if (!projectId) return
         setExecutionStatus('running')
-        setExecutionLogs('Starting execution...\n')
-        addLog('SYSTEM', 'Launching project execution...', 'info')
+        setIsLoadingPreview(true)
+        setLoadingStage('Creating sandbox (this takes 2-3 seconds)...')
+        setShowPreview(true)
+        addLog('SYSTEM', '🚀 Creating E2B cloud sandbox...', 'info')
 
         try {
             const res = await fetch(`http://localhost:8000/api/execute/${projectId}`, { method: 'POST' })
             const data = await res.json()
-            setExecutionLogs(data.logs || '')
 
-            // Prefer embed_url (CodeSandbox) over preview_url (Docker)
-            const urlToUse = data.embed_url || data.preview_url
-            if (urlToUse) {
-                setPreviewUrl(urlToUse)
-                setShowPreview(true)
-            }
+            setIsLoadingPreview(false)
 
             if (data.status === 'error') {
                 setExecutionStatus('error')
-                addLog('SYSTEM', 'Execution failed. Click Debug for analysis.', 'error')
-            } else if (data.status === 'simulated') {
-                setExecutionStatus('stopped')
-                addLog('SYSTEM', 'Running in simulation mode (no CodeSandbox/Docker available)', 'warning')
+                setShowPreview(false)
+                addLog('SYSTEM', data.message || 'Execution failed', 'error')
+                if (data.logs) {
+                    setExecutionLogs(data.logs)
+                }
+                return
+            }
+
+            // E2B response: { status, logs, preview_url, sandbox_id, message, stage }
+            if (data.preview_url) {
+                setPreviewUrl(data.preview_url)
+                setPreviewTechStack(data.message?.match(/\(([^)]+)\)/)?.[1] || '')
+                setExecutionStatus('running')
+                setExecutionLogs(data.logs || '')
+                addLog('SYSTEM', `✅ ${data.message}`, 'success')
+                addLog('SYSTEM', `🌐 Preview: ${data.preview_url}`, 'info')
             } else {
-                const method = data.execution_method || 'unknown'
-                addLog('SYSTEM', `Execution started via ${method}: ${data.status}`, 'success')
-                // Start polling logs
-                pollLogs()
+                setExecutionStatus('error')
+                setShowPreview(false)
+                addLog('SYSTEM', 'No preview URL received', 'error')
             }
         } catch (e) {
             setExecutionStatus('error')
-            addLog('SYSTEM', 'Failed to start execution', 'error')
+            setIsLoadingPreview(false)
+            setShowPreview(false)
+            addLog('SYSTEM', 'Failed to connect to execution service', 'error')
         }
     }
 
@@ -214,7 +227,9 @@ export default function WarRoomPage() {
         try {
             await fetch(`http://localhost:8000/api/stop/${projectId}`, { method: 'POST' })
             setExecutionStatus('stopped')
-            addLog('SYSTEM', 'Execution stopped', 'warning')
+            setShowPreview(false)
+            setPreviewUrl(null)
+            addLog('SYSTEM', '⏹️ Sandbox stopped', 'warning')
         } catch (e) {
             addLog('SYSTEM', 'Failed to stop execution', 'error')
         }
@@ -447,24 +462,21 @@ export default function WarRoomPage() {
                                 </div>
                             )}
 
-                            {/* Preview iframe - Overlays the IDE when active */}
-                            {showPreview && previewUrl && (
-                                <div className="absolute inset-0 z-20 bg-white flex flex-col">
-                                    <div className="bg-slate-800 p-2 flex justify-between items-center">
-                                        <span className="text-xs text-white font-mono">LIVE PREVIEW: {previewUrl}</span>
-                                        <div className="flex gap-2">
-                                            <button
-                                                onClick={() => window.open(previewUrl, '_blank')}
-                                                className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded"
-                                            >
-                                                Open New Tab
-                                            </button>
-                                            <button onClick={() => setShowPreview(false)} className="text-white hover:text-red-400">
-                                                <X className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <iframe src={previewUrl} className="flex-1 w-full border-none" />
+                            {/* Preview Panel - Overlays the IDE when active */}
+                            {showPreview && (previewUrl || isLoadingPreview) && (
+                                <div className="absolute inset-0 z-20">
+                                    <PreviewPanel
+                                        previewUrl={previewUrl || undefined}
+                                        techStack={previewTechStack}
+                                        isLoading={isLoadingPreview}
+                                        loadingStage={loadingStage}
+                                        onClose={() => {
+                                            setShowPreview(false)
+                                            if (previewUrl && executionStatus === 'running') {
+                                                handleStop()
+                                            }
+                                        }}
+                                    />
                                 </div>
                             )}
                         </div>
