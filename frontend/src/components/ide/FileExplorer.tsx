@@ -18,23 +18,21 @@ export function FileExplorer({ files, onSelect, selectedPath }: FileExplorerProp
     const sortedFiles = [...files].sort()
 
     return (
-        <div className="h-full border-r border-slate-800 bg-slate-950 flex flex-col w-64">
-            <div className="p-4 border-b border-slate-800 font-bold text-sm text-slate-400">
-                EXPLORER
-            </div>
+        <div className="h-full flex flex-col w-full bg-transparent">
+            {/* Header removed to avoid duplication with parent container */}
             <div className="flex-1 overflow-y-auto p-2">
                 {sortedFiles.map((path) => (
                     <div
                         key={path}
                         onClick={() => onSelect(path)}
                         className={cn(
-                            "flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm mb-1 transition-colors",
+                            "flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-[11px] font-mono mb-1 transition-all",
                             selectedPath === path
-                                ? "bg-blue-600/20 text-blue-400"
-                                : "text-slate-400 hover:bg-slate-900 hover:text-white"
+                                ? "bg-white/10 text-zinc-100 font-bold border border-white/5"
+                                : "text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
                         )}
                     >
-                        <FileCode className="w-4 h-4 shrink-0" />
+                        <FileCode className={cn("w-3 h-3 shrink-0", selectedPath === path ? "text-zinc-100" : "text-zinc-600")} />
                         <span className="truncate">{path}</span>
                     </div>
                 ))}

@@ -3,7 +3,7 @@
 import Link from "next/link"
 import dynamic from 'next/dynamic';
 import { motion } from "framer-motion"
-import { Activity, Terminal, Shield, Cpu, FileText } from "lucide-react"
+import { Activity, Terminal, Shield, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 const Spline = dynamic(() => import('@splinetool/react-spline'), {
@@ -25,19 +25,6 @@ export default function Home() {
       {/* Content Overlay - Pointer Events None to allow click-through to Spline where empty */}
       <div className="relative z-10 flex flex-col min-h-screen pointer-events-none">
 
-        {/* Top Left Logo */}
-        <div className="absolute top-6 left-8 pointer-events-auto">
-          <div className="p-2 rounded-full bg-slate-900/40 backdrop-blur-md border border-white/10 shadow-[0_0_15px_rgba(59,130,246,0.2)]">
-            <Cpu className="text-blue-400 w-8 h-8" />
-          </div>
-        </div>
-
-        {/* Top Right Docs Button */}
-        <div className="absolute top-6 right-8 pointer-events-auto">
-          <Button variant="ghost" size="icon" className="w-12 h-12 rounded-full bg-slate-900/40 backdrop-blur-md border border-white/10 text-slate-300 hover:text-white hover:bg-blue-500/20 hover:border-blue-500/50 transition-all shadow-[0_0_15px_rgba(59,130,246,0.1)]">
-            <FileText className="w-6 h-6" />
-          </Button>
-        </div>
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
