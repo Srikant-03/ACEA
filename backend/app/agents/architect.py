@@ -99,7 +99,9 @@ Todo App (Full Stack): page.tsx, layout.tsx, globals.css, tailwind.config.ts, po
                 added_configs = []
 
                 # 2. Add Configs based on Stack Detection
-                is_nextjs = "next" in result.get("tech_stack", "").lower() or any("next.config" in p for p in paths) or any("app/page.tsx" in p for p in paths)
+                tech_stack_val = result.get("tech_stack", "")
+                tech_stack_str = tech_stack_val if isinstance(tech_stack_val, str) else " ".join(tech_stack_val) if isinstance(tech_stack_val, list) else str(tech_stack_val)
+                is_nextjs = "next" in tech_stack_str.lower() or any("next.config" in p for p in paths) or any("app/page.tsx" in p for p in paths)
                 
                 # FIX: Ensure next.js uses app router structure if detecting nextjs
                 if is_nextjs:
@@ -113,7 +115,7 @@ Todo App (Full Stack): page.tsx, layout.tsx, globals.css, tailwind.config.ts, po
                              if f["path"] == "frontend/page.tsx" or f["path"] == "frontend/index.tsx":
                                  f["path"] = "frontend/app/page.tsx"
                                  
-                is_vite = "vite" in result.get("tech_stack", "").lower() or "react" in result.get("tech_stack", "").lower() or any("vite.config" in p for p in paths)
+                is_vite = "vite" in tech_stack_str.lower() or "react" in tech_stack_str.lower() or any("vite.config" in p for p in paths)
 
                 if is_nextjs:
                     next_configs = {

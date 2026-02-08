@@ -246,9 +246,10 @@ async def ai_update_file(project_id: str, request: AIUpdateRequest):
     """
     AI-powered single file update.
     Uses minimal API call - only modifies one file.
+    Syncs to E2B sandbox if active.
     """
     from app.services.smart_orchestrator import get_smart_orchestrator
-    from app.core.filesystem import read_file
+    from app.core.filesystem import read_file, update_file_content
     
     # Get current file content
     current_content = read_file(project_id, request.file_path)
@@ -263,6 +264,20 @@ async def ai_update_file(project_id: str, request: AIUpdateRequest):
         current_content,
         request.instruction
     )
+    
+    # Save to disk
+    update_file_content(project_id, request.file_path, updated_content)
+    
+    # Sync to E2B sandbox if active
+    try:
+        from app.services.e2b_vscode_service import get_e2b_vscode_service
+        vscode_service = get_e2b_vscode_service()
+        if project_id in vscode_service.active_sandboxes:
+            await vscode_service.sync_file_to_sandbox(project_id, request.file_path, updated_content)
+    except Exception as e:
+        # Don't fail the request if E2B sync fails
+        import logging
+        logging.warning(f"Failed to sync to E2B sandbox: {e}")
     
     return {
         "status": "success",

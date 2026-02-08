@@ -1,2 +1,16 @@
-Binary file requirements.txt matches
+fastapi
+uvicorn
+python-multipart
+python-dotenv
 e2b-code-interpreter
+python-socketio
+langchain
+langchain-openai
+langgraph
+httpx
+jinja2
+pydantic
+openai
+google-generativeai
+anthropic
+aiohttp
