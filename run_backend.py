@@ -47,7 +47,7 @@ if __name__ == "__main__":
     sys.path.append(os.path.join(os.path.dirname(__file__), "backend"))
     
     uvicorn.run(
-        "backend.app.main:socket_app",
+        "backend.app.main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,

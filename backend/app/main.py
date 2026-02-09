@@ -72,6 +72,27 @@ async def root():
 
 @fastapi_app.get("/health")
 async def health_check():
-    return {"status": "healthy", "services": {"database": "unknown", "redis": "unknown"}}
+    redis_status = "disabled"
+    db_status = "active" # SQLite is always active file-based
+    
+    import os
+    if os.getenv("USE_REDIS_PERSISTENCE", "false").lower() == "true":
+         try:
+             import redis.asyncio as redis
+             url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+             client = redis.from_url(url, socket_connect_timeout=1)
+             await client.ping()
+             await client.close()
+             redis_status = "connected"
+         except Exception as e:
+             redis_status = f"error: {str(e)}"
+
+    return {
+        "status": "healthy", 
+        "services": {
+            "database": db_status, 
+            "redis": redis_status
+        }
+    }
 
 
