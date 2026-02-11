@@ -2,6 +2,7 @@
 # Manages the agent workflow with automatic error detection and fixing
 
 import json
+import os
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from app.agents.state import AgentState
@@ -11,6 +12,7 @@ from app.agents.sentinel import SentinelAgent
 from app.agents.oracle import OracleAgent
 from app.agents.watcher import WatcherAgent
 from app.agents.advisor import AdvisorAgent
+from app.core.persistence import InMemorySaver, AsyncRedisSaver
 
 # Initialize Agents
 architect_agent = ArchitectAgent()
@@ -24,8 +26,16 @@ async def architect_node(state: AgentState):
     from app.core.socket_manager import SocketManager
     sm = SocketManager()
     
-    print("--- ARCHITECT NODE ---")
-    await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "Architect analyzing requirements..."})
+    # Structured Log
+    thread_id = state.get("project_id", "unknown")
+    run_id = state.get("run_id", "unknown") 
+    print(f"--- ARCHITECT NODE (Thread: {thread_id}) ---")
+    
+    await sm.emit("agent_log", {
+        "agent_name": "SYSTEM", 
+        "message": "Architect analyzing requirements...",
+        "metadata": {"thread_id": thread_id, "step": "architect"}
+    })
     
     prompt = state["user_prompt"]
     tech_stack = state.get("tech_stack", "Auto-detect")
@@ -53,8 +63,14 @@ async def virtuoso_node(state: AgentState):
     from app.core.socket_manager import SocketManager
     sm = SocketManager()
     
-    print("--- VIRTUOSO NODE ---")
-    await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "Entering Virtuoso Node..."})
+    thread_id = state.get("project_id", "unknown")
+    print(f"--- VIRTUOSO NODE (Thread: {thread_id}) ---")
+    
+    await sm.emit("agent_log", {
+        "agent_name": "SYSTEM", 
+        "message": "Entering Virtuoso Node...",
+        "metadata": {"thread_id": thread_id, "step": "virtuoso"}
+    })
     
     # 1. Validate Blueprint
     blueprint = state.get("blueprint")
@@ -110,8 +126,14 @@ async def sentinel_node(state: AgentState):
     from app.core.socket_manager import SocketManager
     sm = SocketManager()
     
-    print("--- SENTINEL NODE ---")
-    await sm.emit("agent_log", {"agent_name": "SENTINEL", "message": "Initiating security scan..."})
+    thread_id = state.get("project_id", "unknown")
+    print(f"--- SENTINEL NODE (Thread: {thread_id}) ---")
+    
+    await sm.emit("agent_log", {
+        "agent_name": "SENTINEL", 
+        "message": "Initiating security scan...",
+        "metadata": {"thread_id": thread_id, "step": "sentinel"}
+    })
     
     files = state["file_system"]
     
@@ -133,12 +155,17 @@ async def watcher_node(state: AgentState):
     from app.core.filesystem import BASE_PROJECTS_DIR
     
     sm = SocketManager()
-    print("--- WATCHER NODE ---")
+    thread_id = state.get("project_id", "unknown")
+    print(f"--- WATCHER NODE (Thread: {thread_id}) ---")
     
     project_id = state["project_id"]
     project_path = str(BASE_PROJECTS_DIR / project_id)
     
-    await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Starting project verification..."})
+    await sm.emit("agent_log", {
+        "agent_name": "WATCHER", 
+        "message": "Starting project verification...",
+        "metadata": {"thread_id": thread_id, "step": "watcher"}
+    })
     
     try:
         # User requested FULL AUTONOMY: run code, check errors, fix errors.
@@ -211,8 +238,42 @@ def architect_router(state: AgentState):
 
 builder.add_conditional_edges("architect", architect_router, {"virtuoso": "virtuoso", END: END})
 
-builder.add_edge("virtuoso", "sentinel")
-builder.add_edge("sentinel", "watcher")
+# --- Adaptive Hooks (Future-Proofing) ---
+ENABLE_ADAPTIVE_FLOW = os.getenv("ENABLE_ADAPTIVE_FLOW", "False").lower() == "true"
+
+def adaptive_virtuoso_exit(state: AgentState):
+    """
+    Adaptive Hook: Virtuoso -> Sentinel (Default)
+    """
+    if ENABLE_ADAPTIVE_FLOW:
+        print(f"Adaptive Flow: Inspecting Virtuoso output (Mode: {'Active' if ENABLE_ADAPTIVE_FLOW else 'Inactive'})...")
+        # Placeholder for future logic:
+        # if state.get("confidence") > 0.9: return "watcher"
+    
+    return "sentinel"
+
+def adaptive_sentinel_exit(state: AgentState):
+    """
+    Adaptive Hook: Sentinel -> Watcher (Default)
+    """
+    if ENABLE_ADAPTIVE_FLOW:
+        print(f"Adaptive Flow: Inspecting Sentinel output...")
+    
+    return "watcher"
+
+# Replaces: builder.add_edge("virtuoso", "sentinel")
+builder.add_conditional_edges(
+    "virtuoso", 
+    adaptive_virtuoso_exit, 
+    {"sentinel": "sentinel"}
+)
+
+# Replaces: builder.add_edge("sentinel", "watcher")
+builder.add_conditional_edges(
+    "sentinel",
+    adaptive_sentinel_exit,
+    {"watcher": "watcher"}
+)
 
 # Self-Healing Loop
 builder.add_conditional_edges(
@@ -228,5 +289,16 @@ builder.add_conditional_edges(
 builder.add_edge("increment_iteration", "virtuoso")
 
 # Compile
-memory = MemorySaver()
-graph = builder.compile(checkpointer=memory)
+use_redis = os.getenv("USE_REDIS_PERSISTENCE", "false").lower() == "true"
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+if use_redis:
+    # We use AsyncRedisSaver for production persistence
+    checkpointer = AsyncRedisSaver(redis_url)
+    print(f"Combinator: Using Redis Persistence ({redis_url})")
+else:
+    # Default to In-Memory
+    checkpointer = InMemorySaver()
+    print("Combinator: Using In-Memory Persistence")
+
+graph = builder.compile(checkpointer=checkpointer)

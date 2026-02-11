@@ -36,13 +36,15 @@ async def start_mission(sid, data):
     initial_state = {
         "messages": [],
         "project_id": f"proj_{int(datetime.now().timestamp())}",
+        "run_id": sid, # Use Socket ID as Run ID for tracing
         "user_prompt": prompt,
         "tech_stack": tech_stack,
         "iteration_count": 0,
         "max_iterations": 3,
         "current_status": "planning",
         "file_system": {},
-        "errors": []
+        "errors": [],
+        "retry_count": 0
     }
     
     # Notify Frontend of Project ID immediately so it can prepare the IDE
@@ -51,7 +53,8 @@ async def start_mission(sid, data):
     # 3. Import Graph (lazy to avoid circular imports at module load time)
     from app.orchestrator import graph
     
-    config = {"configurable": {"thread_id": sid}}
+    # Use PROJECT ID as Thread ID for restart-safe persistence
+    config = {"configurable": {"thread_id": initial_state['project_id']}}
     
     # 4. Run Graph Stream
     try:

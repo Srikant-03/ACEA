@@ -10,6 +10,7 @@ class AgentState(TypedDict):
     
     # Project Metadata
     project_id: str
+    run_id: str  # Unique ID for this specific execution run (e.g. socket ID)
     user_prompt: str
     iteration_count: int
     max_iterations: int
@@ -31,6 +32,7 @@ class AgentState(TypedDict):
     # Loop Control
     current_status: str             # "planning", "coding", "testing", "fixing"
     errors: List[str]               # Accumulated errors to fix
+    retry_count: int                # Number of self-healing retries
     
     # ===== REASONING MEMORY (Optional) =====
     reasoning_history: Optional[List[Dict[str, str]]]  # Chronicle of agent thoughts

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
+    USE_REDIS_PERSISTENCE: bool = False
     
     # Security
     JWT_SECRET: str = "supersecretkey_change_me_in_production"
