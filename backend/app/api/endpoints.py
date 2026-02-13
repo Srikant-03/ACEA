@@ -1,336 +1,285 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field, validator
+from typing import Optional
+from datetime import datetime
+import os
+import json
+import subprocess
+import logging
+import uuid
+
 from app.agents.architect import ArchitectAgent
 from app.agents.virtuoso import VirtuosoAgent
 from app.agents.sentinel import SentinelAgent
-from app.agents.oracle import OracleAgent
-from app.agents.watcher import WatcherAgent
-from app.agents.advisor import AdvisorAgent
+
+from app.core.filesystem import (
+    read_project_files,
+    read_file,
+    update_file_content,
+    archive_project,
+    BASE_PROJECTS_DIR
+)
 
 router = APIRouter()
+
+# ========================= REQUEST MODELS =========================
 
 class PromptRequest(BaseModel):
     prompt: str
     project_id: str
 
-@router.post("/architect/design")
-async def run_architect(request: PromptRequest):
-    agent = ArchitectAgent()
-    result = await agent.design_system(request.prompt)
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
-    return result
+class CodeGenRequest(BaseModel):
+    file_path: str
+    description: str
 
-@router.post("/virtuoso/generate")
-async def run_virtuoso(file_path: str, description: str):
-    agent = VirtuosoAgent()
-    code = await agent.generate_code(file_path, description)
-    return {"code": code}
-
-@router.post("/sentinel/audit")
-async def run_sentinel(file_path: str, code: str):
-    agent = SentinelAgent()
-    result = await agent.audit_code(file_path, code)
-    return result
-
-from app.core.filesystem import read_project_files, read_file
-
-@router.get("/projects/{project_id}/files")
-async def get_project_files_route(project_id: str):
-    # Return all files with content for initial load (efficient for small projects)
-    # or just list. Let's return full dict for the "Replit" feel (instant click)
-    files = read_project_files(project_id)
-    return files
-
-@router.get("/projects/{project_id}/files/content")
-async def get_file_content_route(project_id: str, path: str):
-    content = read_file(project_id, path)
-    if content is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    return {"content": content}
+class AuditRequest(BaseModel):
+    file_path: str
+    code: str
 
 class UpdateFileRequest(BaseModel):
     path: str
     content: str
 
-@router.put("/projects/{project_id}/files")
-async def update_file_route(project_id: str, request: UpdateFileRequest):
-    from app.core.filesystem import update_file_content
-    success = update_file_content(project_id, request.path, request.content)
-    if not success:
-         raise HTTPException(status_code=500, detail="Failed to update file")
-    return {"status": "updated", "path": request.path}
-
-from fastapi.responses import FileResponse
-import os
-
-@router.get("/projects/{project_id}/download")
-async def download_project_route(project_id: str):
-    from app.core.filesystem import archive_project
-    zip_path = archive_project(project_id)
-    
-    if not zip_path or not os.path.exists(zip_path):
-        raise HTTPException(status_code=404, detail="Project not found or archive failed")
-        
-    return FileResponse(
-        zip_path, 
-        media_type='application/zip', 
-        filename=f"{project_id}.zip"
-    )
-
-from pydantic import BaseModel, Field, validator
+class AIUpdateRequest(BaseModel):
+    file_path: str
+    instruction: str
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=10, max_length=5000)
     tech_stack: str = Field(default="Auto-detect")
 
-    @validator('prompt')
+    @validator("prompt")
     def validate_prompt(cls, v):
-        if not v.strip():
-            raise ValueError('Prompt cannot be empty')
         return v.strip()
 
-    @validator('tech_stack')
-    def validate_tech_stack(cls, v):
-        allowed = ['React', 'Vue', 'Vanilla JS', 'Auto-detect', 'Next.js + FastAPI', 'React + Node.js', 'Vue + Python', 'Vanilla HTML/JS', 'Python Script']
-        if v not in allowed:
-            # Flexible warning or strict error? Let's be strict for known ones but maybe allow custom for future
-             pass # For now, just allow it or log. Let's strictly return trimmed
-        return v
+class TestGenerationRequest(BaseModel):
+    tech_stack: Optional[str] = "Auto-detect"
+    run_tests: bool = True
+
+class BrowserValidationRequest(BaseModel):
+    validation_level: str = "standard"
+
+class URLValidationRequest(BaseModel):
+    url: str
+    validation_level: str = "standard"
+
+class FileScanRequest(BaseModel):
+    file_path: str
 
 
-@router.post("/generate")
-async def generate_project_route(request: GenerateRequest):
-    from app.core.socket_manager import SocketManager
-    from app import event_handlers # Ensure handlers are loaded
-    
-    # We trigger the same 'start_mission' logic but via API
-    # Since start_mission expects a socket ID (sid), we might need to decouple it 
-    # OR we just trigger the graph directly here in background.
-    
-    # BETTTER APPROACH for Phase 1:
-    # 1. Frontend connects socket first -> gets socket ID.
-    # 2. Frontend calls this API with socket_id included?
-    # NO, strictly speaking, this endpoint should just return a project_id 
-    # and kick off the process.
-    
-    # For now, let's keep the user flow simple:
-    # return a status saying "Use the WebSocket for real-time generation"
-    # OR actually start the background task.
-    
-    return {"status": "use_socket_for_now", "message": "Please use the 'INITIATE LAUNCH' button which uses WebSocket for real-time logs."}
-
-# ==================== EXECUTION ENDPOINTS ====================
-
-from app.core.filesystem import read_project_files
-import json
+# ========================= HELPERS =========================
 
 def _load_blueprint(project_id: str) -> dict:
-    """Load blueprint.json from project directory."""
-    from app.core.filesystem import BASE_PROJECTS_DIR
-    blueprint_path = BASE_PROJECTS_DIR / project_id / "blueprint.json"
-    if blueprint_path.exists():
-        with open(blueprint_path) as f:
-            return json.load(f)
+    path = BASE_PROJECTS_DIR / project_id / "blueprint.json"
+    if path.exists():
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
     return {"tech_stack": "Unknown", "projectType": "frontend"}
 
-@router.post("/execute/{project_id}")
-async def execute_project_route(project_id: str):
-    """
-    Execute project using E2B cloud sandbox.
-    Creates sandbox, uploads files, installs dependencies, starts app.
-    Returns public preview URL.
-    """
-    from app.services.e2b_service import get_e2b_service
-    
-    blueprint = _load_blueprint(project_id)
-    
-    # Create E2B sandbox
-    e2b = get_e2b_service()
-    result = await e2b.create_sandbox(project_id, blueprint)
-    
+
+def check_command(cmd: str) -> bool:
+    try:
+        subprocess.run(cmd, shell=True, capture_output=True, timeout=2)
+        return True
+    except Exception:
+        return False
+
+
+# ========================= CORE AGENTS =========================
+
+@router.post("/architect/design")
+async def run_architect(request: PromptRequest):
+    agent = ArchitectAgent()
+    result = await agent.design_system(request.prompt)
     return result
 
-@router.get("/logs/{project_id}")
-async def get_logs_route(project_id: str):
-    """Get real-time logs from E2B sandbox."""
-    from app.services.e2b_service import get_e2b_service
-    
-    e2b = get_e2b_service()
-    logs = await e2b.get_logs(project_id)
-    
-    return {"logs": logs, "source": "e2b"}
 
-@router.post("/stop/{project_id}")
-async def stop_project_route(project_id: str):
-    """Stop E2B sandbox."""
-    from app.services.e2b_service import get_e2b_service
-    
-    e2b = get_e2b_service()
-    result = await e2b.stop_sandbox(project_id)
-    
-    return {"status": result.get("status", "stopped"), "source": "e2b"}
+@router.post("/virtuoso/generate")
+async def run_virtuoso(request: CodeGenRequest):
+    agent = VirtuosoAgent()
+    code = await agent.generate_code(request.file_path, request.description)
+    return {"code": code}
 
-@router.post("/debug/{project_id}")
-async def debug_project_route(project_id: str):
-    """Analyze execution logs and suggest fixes using ProjectRunner logs."""
-    from app.agents.tester import TesterAgent
-    from app.core.project_runner import ProjectRunner
-    
-    tester = TesterAgent()
-    blueprint = _load_blueprint(project_id)
-    
-    # Get logs from local runner
-    logs = ""
-    runner = ProjectRunner.get_instance(project_id)
-    if runner:
-        logs = runner.get_captured_logs()
-    
-    if not logs:
-        logs = "No execution logs available. The server may not have started."
 
-    # Analyze
-    result = await tester.analyze_execution(logs, blueprint)
-    
-    return {
-        "issues_found": result.get("issues", []),
-        "suggestions": result.get("suggestions", []),
-        "fixes": result.get("fixes", []),
-        "status": result.get("status", "unknown")
-    }
+@router.post("/sentinel/audit")
+async def run_sentinel(request: AuditRequest):
+    agent = SentinelAgent()
+    return await agent.audit_code(request.file_path, request.code)
 
-@router.post("/generate-docs/{project_id}")
-async def generate_docs_route(project_id: str):
-    """Generate README.md for project."""
-    from app.agents.documenter import DocumenterAgent
-    from app.core.filesystem import update_file_content
-    
-    documenter = DocumenterAgent()
-    blueprint = _load_blueprint(project_id)
-    files = list(read_project_files(project_id).keys())
-    
-    readme = await documenter.generate_readme(
-        blueprint, 
-        files, 
-        blueprint.get("description", "Project")
-    )
-    
-    # Save to project
-    success = update_file_content(project_id, "README.md", readme)
-    
-    return {
-        "status": "generated" if success else "error",
-        "content": readme[:500] + "..." if len(readme) > 500 else readme
-    }
 
-@router.get("/validate/{project_id}")
-async def validate_project_route(project_id: str):
-    """Validate project before download."""
-    from app.agents.release import ReleaseAgent
-    
-    release = ReleaseAgent()
-    blueprint = _load_blueprint(project_id)
-    
-    result = release.prepare_release(project_id, blueprint)
-    
-    return result
+# ========================= FILESYSTEM =========================
 
-# ==================== AI EDIT & MONITORING ENDPOINTS ====================
+@router.get("/projects/{project_id}/files")
+async def get_project_files(project_id: str):
+    return read_project_files(project_id)
 
-class AIUpdateRequest(BaseModel):
-    file_path: str
-    instruction: str
+
+@router.get("/projects/{project_id}/files/content")
+async def get_file_content(project_id: str, path: str):
+    content = read_file(project_id, path)
+    if content is None:
+        raise HTTPException(404, "File not found")
+    return {"content": content}
+
+
+@router.put("/projects/{project_id}/files")
+async def update_file(project_id: str, request: UpdateFileRequest):
+    if not update_file_content(project_id, request.path, request.content):
+        raise HTTPException(500, "Failed to update file")
+    return {"status": "updated"}
+
+
+@router.get("/projects/{project_id}/download")
+async def download_project(project_id: str):
+    zip_path = archive_project(project_id)
+    if not zip_path or not os.path.exists(zip_path):
+        raise HTTPException(404, "Archive failed")
+    return FileResponse(zip_path, media_type="application/zip", filename=f"{project_id}.zip")
+
+
+# ========================= AI FILE EDIT =========================
 
 @router.post("/update-file-ai/{project_id}")
 async def ai_update_file(project_id: str, request: AIUpdateRequest):
-    """
-    AI-powered single file update.
-    Uses minimal API call - only modifies one file.
-    Syncs to E2B sandbox if active.
-    """
     from app.services.smart_orchestrator import get_smart_orchestrator
-    from app.core.filesystem import read_file, update_file_content
-    
-    # Get current file content
-    current_content = read_file(project_id, request.file_path)
-    if current_content is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    # AI update
-    orchestrator = get_smart_orchestrator()
-    updated_content = await orchestrator.update_single_file(
-        project_id,
-        request.file_path,
-        current_content,
-        request.instruction
-    )
-    
-    # Save to disk
-    update_file_content(project_id, request.file_path, updated_content)
-    
-    # Sync to E2B sandbox if active
-    try:
-        from app.services.e2b_vscode_service import get_e2b_vscode_service
-        vscode_service = get_e2b_vscode_service()
-        if project_id in vscode_service.active_sandboxes:
-            await vscode_service.sync_file_to_sandbox(project_id, request.file_path, updated_content)
-    except Exception as e:
-        # Don't fail the request if E2B sync fails
-        import logging
-        logging.warning(f"Failed to sync to E2B sandbox: {e}")
-    
-    return {
-        "status": "success",
-        "file_path": request.file_path,
-        "updated_content": updated_content
-    }
 
-@router.get("/keys/status")
-async def get_key_status():
-    """Returns health status of all API keys."""
-    from app.core.key_manager import KeyManager
-    
-    km = KeyManager()
-    return km.get_status()
+    content = read_file(project_id, request.file_path)
+    if content is None:
+        raise HTTPException(404, "File not found")
 
-@router.post("/generate-optimized")
-async def generate_project_optimized(request: GenerateRequest):
-    """
-    Optimized project generation using Smart Orchestrator.
-    Uses combined prompts and caching for reduced API calls.
-    """
-    from app.services.smart_orchestrator import get_smart_orchestrator
-    from app.core.filesystem import BASE_PROJECTS_DIR
-    import uuid
-    
-    project_id = str(uuid.uuid4())
     orchestrator = get_smart_orchestrator()
-    
-    result = await orchestrator.generate_project_optimized(
-        prompt=request.prompt,
-        tech_stack=request.tech_stack if request.tech_stack != "Auto-detect" else None,
-        include_docs=True
+    updated = await orchestrator.update_single_file(
+        project_id, request.file_path, content, request.instruction
     )
-    
-    # Write files
-    project_dir = BASE_PROJECTS_DIR / project_id
-    project_dir.mkdir(parents=True, exist_ok=True)
-    
-    files = result.get("files", {})
-    for path, content in files.items():
-        file_path = project_dir / path
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, 'w') as f:
-            f.write(content)
-    
-    # Save blueprint
-    blueprint = result.get("blueprint", {})
-    with open(project_dir / "blueprint.json", 'w') as f:
-        json.dump(blueprint, f, indent=2)
-    
-    return {
-        "project_id": project_id,
-        "status": "success",
-        "source": result.get("source", "api"),
-        "files_generated": len(files)
-    }
+
+    update_file_content(project_id, request.file_path, updated)
+    return {"status": "success"}
+
+
+# ========================= EXECUTION (E2B) =========================
+
+@router.post("/execute/{project_id}")
+async def execute_project(project_id: str):
+    from app.services.e2b_service import get_e2b_service
+    blueprint = _load_blueprint(project_id)
+    e2b = get_e2b_service()
+    return await e2b.create_sandbox(project_id, blueprint)
+
+
+@router.get("/logs/{project_id}")
+async def get_logs(project_id: str):
+    from app.services.e2b_service import get_e2b_service
+    e2b = get_e2b_service()
+    return {"logs": await e2b.get_logs(project_id)}
+
+
+@router.post("/stop/{project_id}")
+async def stop_project(project_id: str):
+    from app.services.e2b_service import get_e2b_service
+    e2b = get_e2b_service()
+    return await e2b.stop_sandbox(project_id)
+
+
+# ========================= TESTING AGENT =========================
+
+@router.post("/test/{project_id}")
+async def test_project(project_id: str, request: TestGenerationRequest):
+    from app.agents.testing_agent import TestingAgent
+
+    if not check_command("pytest --version"):
+        raise HTTPException(500, "pytest not installed on server")
+
+    files = read_project_files(project_id)
+    if not files:
+        raise HTTPException(404, "Project not found")
+
+    project_path = str(BASE_PROJECTS_DIR / project_id)
+    agent = TestingAgent()
+
+    if request.run_tests:
+        return await agent.generate_and_run_tests(
+            project_path=project_path,
+            file_system=files,
+            tech_stack=request.tech_stack
+        )
+    else:
+        return await agent.quick_validate(project_path)
+
+
+# ========================= BROWSER VALIDATION =========================
+
+@router.post("/validate-browser/{project_id}")
+async def validate_browser(project_id: str, request: BrowserValidationRequest):
+    from app.services.e2b_service import get_e2b_service
+    from app.agents.browser_validation_agent import BrowserValidationAgent
+
+    if not check_command("python -m playwright --version"):
+        raise HTTPException(500, "playwright not installed on server")
+
+    e2b = get_e2b_service()
+    sandbox = e2b.sandboxes.get(project_id)
+    if not sandbox:
+        raise HTTPException(400, "Run project first")
+
+    agent = BrowserValidationAgent()
+    return await agent.comprehensive_validate(
+        url=sandbox["url"],
+        project_path=str(BASE_PROJECTS_DIR / project_id),
+        validation_level=request.validation_level
+    )
+
+
+@router.post("/validate-browser/url")
+async def validate_url(request: URLValidationRequest):
+    from app.agents.browser_validation_agent import BrowserValidationAgent
+
+    if not check_command("python -m playwright --version"):
+        raise HTTPException(500, "playwright not installed on server")
+
+    agent = BrowserValidationAgent()
+    return await agent.comprehensive_validate(
+        url=request.url,
+        project_path="",
+        validation_level=request.validation_level
+    )
+
+
+# ========================= SECURITY =========================
+
+@router.post("/security-scan/{project_id}")
+async def security_scan(project_id: str):
+    if not check_command("bandit --version"):
+        raise HTTPException(500, "bandit not installed on server")
+
+    files = read_project_files(project_id)
+    sentinel = SentinelAgent()
+    return await sentinel.batch_audit(files)
+
+
+@router.post("/security-scan/{project_id}/file")
+async def security_scan_file(project_id: str, request: FileScanRequest):
+    if not check_command("bandit --version"):
+        raise HTTPException(500, "bandit not installed on server")
+
+    content = read_file(project_id, request.file_path)
+    sentinel = SentinelAgent()
+    return await sentinel.audit_code(request.file_path, content)
+
+
+@router.get("/security-scan/{project_id}/report")
+async def security_report(project_id: str):
+    files = read_project_files(project_id)
+    sentinel = SentinelAgent()
+    result = await sentinel.batch_audit(files)
+
+    report = f"""# Security Scan Report
+**Project ID:** {project_id}
+**Scan Date:** {datetime.now().isoformat()}
+**Status:** {result['status']}
+"""
+    return {"report": report}
+
