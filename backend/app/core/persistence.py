@@ -16,8 +16,8 @@ class InMemorySaver(LangGraphMemorySaver):
     """
     pass
 
-# 2. AsyncRedisSaver (New Implementation)
-class AsyncRedisSaver(BaseCheckpointSaver):
+# 2. LangGraphRedisSaver (formerly AsyncRedisSaver)
+class LangGraphRedisSaver(BaseCheckpointSaver):
     """
     Redis-based CheckpointSaver implementation for LangGraph.
     Stores checkpoints in Redis using Pickle serialization.
@@ -119,3 +119,45 @@ class AsyncRedisSaver(BaseCheckpointSaver):
              ckpt = await self.aget_tuple(config)
              if ckpt:
                  yield ckpt
+
+
+# 3. Simple AsyncRedisSaver (User Requested)
+class AsyncRedisSaver:
+    def __init__(self, url: str):
+        self.url = url
+        self._redis = None
+
+    async def _get_redis(self):
+        if not self._redis:
+            self._redis = redis.from_url(self.url, decode_responses=True)
+        return self._redis
+
+    async def get(self, key: str) -> str:
+        """
+        Get a JSON string by key from Redis.
+        Returns the string or raises KeyError if not found.
+        """
+        client = await self._get_redis()
+        try:
+            value = await client.get(key)
+        except Exception as e:
+            # Fallback or error handling logic could go here
+            # For now, just re-raise as per "catch Redis connection errors"
+            print(f"AsyncRedisSaver Get Error: {e}")
+            raise e
+
+        if value is None:
+            raise KeyError(f"Redis key not found: {key}")
+        return value
+
+    async def set(self, key: str, value: str) -> None:
+        """
+        Set a JSON string value by key in Redis.
+        """
+        client = await self._get_redis()
+        try:
+             await client.set(key, value)
+        except Exception as e:
+             # If USE_REDIS_PERSISTENCE is True, any failure should raise an exception
+             print(f"AsyncRedisSaver Set Error: {e}")
+             raise e
