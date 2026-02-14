@@ -10,6 +10,7 @@ import sys
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
+from app.agents.state import AgentState
 
 class TestingAgent:
     def __init__(self):
@@ -18,6 +19,49 @@ class TestingAgent:
             "javascript": ["vitest", "jest", "mocha"],
             "typescript": ["vitest", "jest"]
         }
+
+    async def run(self, state: AgentState) -> AgentState:
+        """
+        Execute unit and E2E tests. Append failures to state.issues.
+        """
+        project_dir = getattr(state, "project_dir", ".")
+        
+        state.messages.append("TestingAgent: Running PyTest...")
+        try:
+            # Check if pytest is available first?
+            # subprocess.run raises FileNotFoundError if command not found
+            result = subprocess.run(
+                ["pytest", "--maxfail=1", "--disable-warnings", "--json-report"],
+                cwd=project_dir, capture_output=True, text=True
+            )
+            
+            if result.returncode != 0:
+                # Issue isn't defined in this file, need to make sure Issue is imported
+                # state.issues is list of Issue objects
+                # Issue(file="PyTest", issue="Unit tests failed", fix="Check logs")
+                from app.agents.state import Issue
+                state.issues.append(Issue(file="PyTest", issue="Unit tests failed", fix="Check logs"))
+                state.messages.append(f"TestingAgent: PyTest errors: {result.stderr}")
+        except Exception as e:
+            state.messages.append(f"TestingAgent: PyTest invocation failed: {e}")
+
+        state.messages.append("TestingAgent: Running Vitest...")
+        try:
+            result = subprocess.run(
+                ["npm", "run", "test:vitest"], cwd=project_dir,
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                from app.agents.state import Issue
+                state.issues.append(Issue(file="Vitest", issue="Frontend tests failed", fix="Check logs"))
+                state.messages.append(f"TestingAgent: Vitest errors: {result.stderr}")
+        except Exception as e:
+            from app.agents.state import Issue
+            # Optional: don't fail if npm fails (e.g. no frontend)
+            state.messages.append(f"TestingAgent: Vitest invocation failed: {e}")
+
+        state.messages.append("TestingAgent: Tests complete.")
+        return state
 
     async def generate_and_run_tests(
         self, 
