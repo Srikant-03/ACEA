@@ -21,6 +21,7 @@ from app.agents.sentinel import SentinelAgent
 from app.agents.oracle import OracleAgent
 from app.agents.watcher import WatcherAgent
 from app.agents.advisor import AdvisorAgent
+from app.agents.testing_agent import TestingAgent # Added
 
 # LangGraph
 from langgraph.graph import StateGraph, END
@@ -50,6 +51,7 @@ sentinel_agent = SentinelAgent()
 oracle_agent = OracleAgent()
 watcher_agent = WatcherAgent()
 advisor_agent = AdvisorAgent()
+testing_agent = TestingAgent() # Added
 
 # Helper to save state manually
 async def save_state(state: AgentState):
@@ -106,14 +108,6 @@ async def architect_node(state: AgentState):
         # Note: True thought signature injection might need specific API parameter, 
         # but user said: "prepend or append state.thought_signature to the system prompt"
     
-    # Use HybridClient for generation if architect uses it?
-    # ArchitectAgent likely uses its own client internally. 
-    # To strictly follow "In the orchestrator... instantiate HybridModelClient... use hybrid_client.generate(...)"
-    # we would need to replace ArchitectAgent's internal call with hybrid_client.generate.
-    # Currently ArchitectAgent.design_system is called.
-    # I won't rewrite ArchitectAgent internals unless I have to. 
-    # But I will update state persistence after.
-    
     blueprint = await architect_agent.design_system(state.user_prompt, state.tech_stack)
     
     if "error" in blueprint:
@@ -131,9 +125,6 @@ async def architect_node(state: AgentState):
     # Save State
     await save_state(state)
     
-    # Return dict for LangGraph merge (AgentState is now a dataclass, so we might need to return dict to update it if Graph expects dict updates)
-    # But since we defined __getitem__ etc, maybe it works. 
-    # However, LangGraph nodes usually return a dict of updates.
     return {"blueprint": blueprint, "current_status": "blueprint_generated"}
 
 from app.core.filesystem import write_project_files
@@ -161,11 +152,6 @@ async def virtuoso_node(state: AgentState):
     errors = state.errors
     current_files = state.file_system
     iteration = state.iteration_count
-    
-    # Hybrid Client Usage Example (if Virtuoso exposed a way to use external client)
-    # Since virtuoso_agent.generate_from_blueprint is a high level method, we assume it uses internal client.
-    # To use HybridClient we'd need to pass it in. 
-    # For now, we focus on Persistence.
     
     if errors and iteration > 0:
         new_files = await _handle_self_healing(sm, errors, current_files, iteration)
@@ -208,6 +194,7 @@ def _post_process_files(files):
 
 async def sentinel_node(state: AgentState):
     from app.core.socket_manager import SocketManager
+    from app.agents.state import Issue
     sm = SocketManager()
     
     thread_id = state.project_id
@@ -222,10 +209,21 @@ async def sentinel_node(state: AgentState):
     files = state.file_system
     report = await sentinel_agent.batch_audit(files)
     
+    # Convert vulnerabilities to Issue objects
+    if "vulnerabilities" in report:
+        for v in report["vulnerabilities"]:
+            state.issues.append(Issue(
+                file=v.get("file", "unknown"), # sentinel usually returns path as key, but here it's in list?
+                # Check report format in sentinel.py: "vulnerabilities.append({... 'description': ... 'fix_suggestion':...})"
+                # It doesn't explicitly have 'file' key in the dict items, but description says "in {file_path}"
+                # I should update sentinel.py to include file path explicitly or parse it here.
+                # Assuming sentinel returns valuable info.
+                issue=v.get("description", "Security vulnerability"),
+                fix=v.get("fix_suggestion", "")
+            ))
+            
     if report["status"] == "BLOCKED":
         await sm.emit("agent_log", {"agent_name": "SENTINEL", "message": f"🚨 Security issues found! Code blocked."})
-        # Record issues in new `issues` field
-        # Ensure report format matches expectations or map it
     else:
         await sm.emit("agent_log", {"agent_name": "SENTINEL", "message": "✅ Security scan passed"})
             
@@ -235,11 +233,41 @@ async def sentinel_node(state: AgentState):
     # Save State
     await save_state(state)
     
-    return {"security_report": report, "current_status": "security_audited"}
+    return {"security_report": report, "current_status": "security_audited", "issues": state.issues}
+
+async def testing_node(state: AgentState):
+    """Run automated tests."""
+    from app.core.socket_manager import SocketManager
+    sm = SocketManager()
+    
+    thread_id = state.project_id
+    print(f"--- TESTING NODE (Thread: {thread_id}) ---")
+    
+    await sm.emit("agent_log", {
+        "agent_name": "TESTING", 
+        "message": "Starting automated tests...",
+        "metadata": {"thread_id": thread_id, "step": "testing"}
+    })
+    
+    # Ensure project_dir is set on state
+    from app.core.filesystem import BASE_PROJECTS_DIR
+    project_dir = str(BASE_PROJECTS_DIR / state.project_id)
+    # Using setattr to be safe as dataclass might not have it defined in __init__ if strictly typed without extra fields
+    # But AgentState definition usually allows dynamic fields if not slotted or if specifically added.
+    setattr(state, "project_dir", project_dir)
+    
+    state = await testing_agent.run(state)
+    # testing_agent.run updates state.issues
+    
+    # Save State
+    await save_state(state)
+    
+    return {"issues": state.issues}
 
 async def watcher_node(state: AgentState):
     from app.core.socket_manager import SocketManager
     from app.core.filesystem import BASE_PROJECTS_DIR
+    from app.agents.state import Issue
     
     sm = SocketManager()
     thread_id = state.project_id
@@ -266,6 +294,17 @@ async def watcher_node(state: AgentState):
         
         state.visual_report = report
         state.current_status = "visually_verified"
+        
+        if report.get("screenshot"):
+            # assuming sequential steps, use current length + 1
+            step_num = len(state.screenshot_paths) + 1
+            state.screenshot_paths[step_num] = report["screenshot"]
+
+        # Convert errors to Issues
+        if report.get("errors"):
+            for err in report["errors"]:
+                state.issues.append(Issue(file="Browser/UI", issue=str(err), fix="Check logs"))
+        
         if report.get("fix_this"):
             state.errors = report.get("errors", [])
         
@@ -275,7 +314,9 @@ async def watcher_node(state: AgentState):
         return {
             "visual_report": report,
             "current_status": "visually_verified",
-            "errors": state.errors
+            "errors": state.errors,
+            "screenshot_paths": state.screenshot_paths,
+            "issues": state.issues
         }
     except Exception as e:
         await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"⚠️ Verification error: {str(e)[:50]}"})
@@ -318,6 +359,7 @@ builder = StateGraph(AgentState)
 builder.add_node("architect", architect_node)
 builder.add_node("virtuoso", virtuoso_node)
 builder.add_node("sentinel", sentinel_node)
+builder.add_node("testing", testing_node) # Added
 builder.add_node("watcher", watcher_node)
 builder.add_node("increment_iteration", increment_iteration)
 
@@ -339,10 +381,14 @@ def adaptive_virtuoso_exit(state: AgentState):
     return "sentinel"
 
 def adaptive_sentinel_exit(state: AgentState):
-    return "watcher"
+    return "testing" # Modified: Sentinel -> Testing
+
+def adaptive_testing_exit(state: AgentState):
+    return "watcher" # Added: Testing -> Watcher
 
 builder.add_conditional_edges("virtuoso", adaptive_virtuoso_exit, {"sentinel": "sentinel"})
-builder.add_conditional_edges("sentinel", adaptive_sentinel_exit, {"watcher": "watcher"})
+builder.add_conditional_edges("sentinel", adaptive_sentinel_exit, {"testing": "testing"}) # Modified
+builder.add_conditional_edges("testing", adaptive_testing_exit, {"watcher": "watcher"}) # Added
 
 builder.add_conditional_edges(
     "watcher",

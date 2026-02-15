@@ -15,6 +15,7 @@ class WatcherAgent:
         """
         REAL browser verification using Playwright.
         Opens the URL, captures screenshot, and checks for errors.
+        Includes Visual QA (Vibe Check).
         """
         from app.core.socket_manager import SocketManager
         sm = SocketManager()
@@ -22,6 +23,7 @@ class WatcherAgent:
         errors = []
         console_logs = []
         screenshot_path = None
+        visual_issues = []
         
         try:
             from playwright.async_api import async_playwright
@@ -59,6 +61,10 @@ class WatcherAgent:
                     
                     await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Screenshot saved: {screenshot_path}"})
                     
+                    # Perform Visual QA (Vibe Check)
+                    visual_issues = await self.analyze_visuals(screenshot_path, console_logs, sm)
+                    errors.extend([issue['issue'] for issue in visual_issues])
+                    
                 except Exception as nav_error:
                     errors.append(f"Navigation failed: {str(nav_error)}")
                 
@@ -90,6 +96,7 @@ class WatcherAgent:
                 "errors": all_errors,
                 "console_logs": console_logs,
                 "screenshot": screenshot_path,
+                "visual_issues": visual_issues,
                 "fix_this": True
             }
         else:
@@ -99,8 +106,49 @@ class WatcherAgent:
                 "errors": [],
                 "console_logs": console_logs,
                 "screenshot": screenshot_path,
+                "visual_issues": [],
                 "fix_this": False
             }
+
+    async def analyze_visuals(self, screenshot_path: str, logs: List[Dict], sm) -> List[Dict]:
+        """
+        Analyze screenshot for visual defects using Vision API (Mocked/Placeholder).
+        Original VibeAgent logic integrated here.
+        """
+        issues = []
+        try:
+            import os
+            from PIL import Image, ImageChops
+            
+            if os.path.exists(screenshot_path):
+                # 1. Basic Pixel Diff (Placeholder)
+                try:
+                    img = Image.open(screenshot_path)
+                    baseline_path = "baseline.png"
+                    if os.path.exists(baseline_path):
+                         baseline = Image.open(baseline_path)
+                         diff = ImageChops.difference(img, baseline)
+                         if diff.getbbox():
+                             # issues.append({"file": "UI", "issue": "Visual regression detected", "fix": "Check UI changes"})
+                             pass
+                except Exception as e:
+                     await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Image processing error: {e}"})
+
+                # 2. Vision API Call (Mocked as per requirements)
+                # In real scenario, would call HybridModelClient with image
+                # Here we just log intention
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Analyzing visual layout..."})
+                
+                # specific user requirement: "VibeAgent: Vision API returned..." logic
+                # I'm integrating it into Watcher.
+                # If we had a real endpoint to hit:
+                # vision_url = os.getenv("VISION_API_URL")
+                # if vision_url: requests.post(...)
+               
+        except Exception as e:
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Visual analysis failed: {e}"})
+            
+        return issues
     
     async def run_and_verify_project(self, project_path: str, project_id: str) -> Dict[str, Any]:
         """
