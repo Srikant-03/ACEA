@@ -157,9 +157,9 @@ class HybridModelClient:
     Hybrid client that tries cloud APIs first, falls back to local.
     """
     
-    def __init__(self):
+    def __init__(self, key_manager=None):
         from app.core.key_manager import KeyManager
-        self.km = KeyManager()
+        self.km = key_manager or KeyManager()
         self.ollama = OllamaClient()
         self.use_local = False  # Track if we're in local mode
         self._ollama_available = None  # Cache availability check

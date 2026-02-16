@@ -224,6 +224,11 @@ async def sentinel_node(state: AgentState):
             
     if report["status"] == "BLOCKED":
         await sm.emit("agent_log", {"agent_name": "SENTINEL", "message": f"🚨 Security issues found! Code blocked."})
+        # Add critical issues to state.errors for self-healing
+        if "vulnerabilities" in report:
+            for v in report["vulnerabilities"]:
+                if v.get("severity") in ["HIGH", "CRITICAL"]:
+                    state.errors.append(f"Security Critical: {v.get('description')} (Fix: {v.get('fix_suggestion')})")
     else:
         await sm.emit("agent_log", {"agent_name": "SENTINEL", "message": "✅ Security scan passed"})
             

@@ -118,8 +118,21 @@ class ProjectRunner:
         
         try:
             self._log(f"Starting server on port {self.frontend_port}...")
-            # Kill anything running on this port (Windows specific)
-            subprocess.run(f"netstat -ano | findstr :{self.frontend_port} && taskkill /F /PID $(netstat -ano | findstr :{self.frontend_port} | awk '{{print $5}}')", shell=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            # Kill anything running on this port (Windows Compatible)
+            try:
+                # Find PID using netstat
+                cmd = f"netstat -ano | findstr :{self.frontend_port}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if result.stdout:
+                    lines = result.stdout.strip().splitlines()
+                    for line in lines:
+                        parts = line.split()
+                        if parts:
+                            pid = parts[-1]
+                            if pid.isdigit() and int(pid) > 0:
+                                subprocess.run(f"taskkill /F /PID {pid}", shell=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            except Exception as kill_err:
+                self._log(f"Warning: Failed to clear port {self.frontend_port}: {kill_err}")
 
             self.frontend_process = subprocess.Popen(
                 ["npm", "run", "dev"],

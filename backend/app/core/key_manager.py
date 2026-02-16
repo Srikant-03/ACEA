@@ -4,10 +4,15 @@ from google.genai import Client as GeminiClient
 import os
 
 class KeyManager:
-    def __init__(self, keys: List[str]):
+    def __init__(self, keys: Optional[List[str]] = None):
+        if keys is None:
+            from app.core.config import settings
+            keys = settings.api_keys_list
+            
         if not keys:
              # Fallback to env or empty list, but orchestrator should provide them.
-             pass
+             print("Warning: KeyManager initialized with no keys.")
+             
         self.keys = keys
         self.index = 0
         self.exhausted: Set[str] = set()

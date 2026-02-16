@@ -360,11 +360,11 @@ class WatcherAgent:
             
             # Basic syntax checks
             if content.count('{') != content.count('}'):
-                errors.append(f"{tsx_file.name}: Mismatched curly braces")
+                errors.append(f"{code_file.name}: Mismatched curly braces")
             if content.count('(') != content.count(')'):
-                errors.append(f"{tsx_file.name}: Mismatched parentheses")
+                errors.append(f"{code_file.name}: Mismatched parentheses")
             if "\\n" in content:  # Escaped newlines (should be real newlines)
-                errors.append(f"{tsx_file.name}: Contains escaped newlines (file format issue)")
+                errors.append(f"{code_file.name}: Contains escaped newlines (file format issue)")
         
         if errors:
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Found {len(errors)} file issues"})

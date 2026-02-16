@@ -41,9 +41,12 @@ class TestingAgent:
                 # Issue(file="PyTest", issue="Unit tests failed", fix="Check logs")
                 from app.agents.state import Issue
                 state.issues.append(Issue(file="PyTest", issue="Unit tests failed", fix="Check logs"))
-                state.messages.append(f"TestingAgent: PyTest errors: {result.stderr}")
+                error_msg = f"TestingAgent: PyTest errors: {result.stderr}"
+                state.messages.append(error_msg)
+                state.errors.append(f"PyTest Failed: {result.stderr[:500]}") # Truncate for safety
         except Exception as e:
             state.messages.append(f"TestingAgent: PyTest invocation failed: {e}")
+            state.errors.append(f"PyTest execution error: {str(e)}")
 
         state.messages.append("TestingAgent: Running Vitest...")
         try:
@@ -54,11 +57,16 @@ class TestingAgent:
             if result.returncode != 0:
                 from app.agents.state import Issue
                 state.issues.append(Issue(file="Vitest", issue="Frontend tests failed", fix="Check logs"))
-                state.messages.append(f"TestingAgent: Vitest errors: {result.stderr}")
+                error_msg = f"TestingAgent: Vitest errors: {result.stderr}"
+                state.messages.append(error_msg)
+                state.errors.append(f"Vitest Failed: {result.stderr[:500]}")
         except Exception as e:
             from app.agents.state import Issue
             # Optional: don't fail if npm fails (e.g. no frontend)
             state.messages.append(f"TestingAgent: Vitest invocation failed: {e}")
+            # Don't add to state.errors if it's just missing npm/tests, logic depends on strictness.
+            # safe to ignore unless vital.
+            pass
 
         state.messages.append("TestingAgent: Tests complete.")
         return state
