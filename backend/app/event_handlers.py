@@ -36,6 +36,7 @@ async def start_mission(sid, data):
     initial_state = {
         "messages": [],
         "project_id": f"proj_{int(datetime.now().timestamp())}",
+        "agent_id": f"proj_{int(datetime.now().timestamp())}", # Initialize agent_id with project_id
         "run_id": sid, # Use Socket ID as Run ID for tracing
         "user_prompt": prompt,
         "tech_stack": tech_stack,

@@ -11,7 +11,7 @@ class Issue:
 
 @dataclass
 class AgentState:
-    agent_id: str
+    agent_id: str = ""
     messages: List[str] = field(default_factory=list)
     blueprint: str = ""
     
