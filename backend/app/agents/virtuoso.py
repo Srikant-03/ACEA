@@ -34,7 +34,7 @@ class VirtuosoAgent:
         await sm.emit("generation_started", {"total_files": len(file_list), "file_list": [f["path"] for f in file_list]})
 
         # BATCH: Generate all files in one call
-        files = await self.batch_generate_files(file_list, prompt_context)
+        files = await self.batch_generate_files(file_list, prompt_context, existing_files)
         
         # Emit file generation events for UI
         for path, code in files.items():
@@ -43,7 +43,7 @@ class VirtuosoAgent:
         await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"✅ Batch Complete: {len(files)} files created!"})
         return files
 
-    async def batch_generate_files(self, file_list: list, context: str) -> dict:
+    async def batch_generate_files(self, file_list: list, context: str, existing_files: dict = None) -> dict:
         """
         Generate ALL files in ONE API call using hybrid client.
         Falls back to Ollama if Gemini quota exhausted.
@@ -89,7 +89,9 @@ RULES:
 6. INTELLIGENT DEPENDENCY MANAGEMENT:
    - You MUST generate a 'package.json' tailored to the specific Tech Stack.
    - USE "latest" for versions if unsure. DO NOT hallucinate specific version numbers like "5.9.3".
-   - IF using Tailwind CSS: You MUST include 'tailwindcss', 'postcss', 'autoprefixer'.
+   - IF using Tailwind CSS: You MUST include 'tailwindcss', 'postcss', AND '@tailwindcss/postcss'.
+   - IF generating 'postcss.config.mjs': Use 'export default {{ plugins: {{ "@tailwindcss/postcss": {{}} }} }};'
+   - IF generating 'frontend/app/globals.css': Use '@import "tailwindcss";' (Tailwind 4 syntax).
    - IF using Next.js: 
         - Use minimal config: 'module.exports = {{ reactStrictMode: true }};'
         - DO NOT add custom 'webpack' rules unless explicitly requested (avoids Turbopack conflicts).
@@ -133,20 +135,27 @@ RULES:
         
         # Fallback: Sequential generation
         await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": "⚠️ Batch failed. Using sequential generation..."})
-        return await self.sequential_generate_files(file_list, context)
+        return await self.sequential_generate_files(file_list, context, existing_files)
 
-    async def sequential_generate_files(self, file_list: list, context: str) -> dict:
-        """Fallback: Generate files one at a time."""
+    async def sequential_generate_files(self, file_list: list, context: str, existing_files: dict = None) -> dict:
+        """Fallback: Generate files one at a time. Skips files that already exist."""
         from app.core.local_model import HybridModelClient
         from app.core.socket_manager import SocketManager
         
         client = HybridModelClient()
         sm = SocketManager()
         
-        files = {}
+        # Start with existing files to preserve progress
+        files = existing_files.copy() if existing_files else {}
+        
         for file_info in file_list:
             path = file_info.get("path")
             desc = file_info.get("description")
+            
+            # RESUMPTION LOGIC: If file exists and is not empty, skip it
+            if path in files and files[path] and len(files[path].strip()) > 10:
+                await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"⏩ Skipping {path} (already generated)"})
+                continue
             
             await sm.emit("file_status", {"path": path, "status": "generating"})
             await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"Coding {path}..."})
@@ -159,9 +168,11 @@ Context: {context}
 Return ONLY the code, no markdown blocks.
 
 CRITICAL RULES:
-1. IF generating 'package.json': Include 'autoprefixer', 'postcss', 'tailwindcss' in devDependencies if using Tailwind.
-2. IF generating 'next.config.js': Use CommonJS 'module.exports = {{ reactStrictMode: true }};'
-3. IF generating 'frontend/app/layout.tsx': MUST include <html> and <body> tags.
+1. IF generating 'package.json' with Tailwind: Include 'tailwindcss', 'postcss', AND '@tailwindcss/postcss'.
+2. IF generating 'postcss.config.mjs': Use 'export default {{ plugins: {{ "@tailwindcss/postcss": {{}} }} }};'
+3. IF generating 'frontend/app/globals.css': Use '@import "tailwindcss";' (Tailwind 4 syntax).
+4. IF generating 'next.config.js': Use CommonJS 'module.exports = {{ reactStrictMode: true }};'
+5. IF generating 'frontend/app/layout.tsx': MUST include <html> and <body> tags.
 """
             
             try:
@@ -176,6 +187,10 @@ CRITICAL RULES:
                      if re.match(f"^{lang}\\s+", code, re.IGNORECASE):
                           code = re.sub(f"^{lang}\\s+", "", code, flags=re.IGNORECASE).strip()
                 files[path] = code
+                
+                # EMIT PARTIAL SUCCESS: Update UI immediately so user sees progress
+                await sm.emit("file_generated", {"path": path, "content": code, "status": "created"})
+                
             except Exception as e:
                 files[path] = f"# Error generating {path}: {e}"
         

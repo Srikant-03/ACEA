@@ -264,10 +264,17 @@ async def testing_node(state: AgentState):
     state = await testing_agent.run(state)
     # testing_agent.run updates state.issues
     
+    # TestingAgent runs in place, updating state.messages and state.errors
+    # We must return these updates to the graph so they are emitted to the UI
+    
     # Save State
     await save_state(state)
     
-    return {"issues": state.issues}
+    return {
+        "issues": state.issues,
+        "messages": state.messages[-5:], # Return recent messages to ensure visibility without flooding
+        "errors": state.errors
+    }
 
 async def watcher_node(state: AgentState):
     from app.core.socket_manager import SocketManager

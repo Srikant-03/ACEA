@@ -52,7 +52,7 @@ async def start_mission(sid, data):
     await sio.emit('mission_accepted', {'project_id': initial_state['project_id']}, room=sid)
     
     # 3. Import Graph (lazy to avoid circular imports at module load time)
-    from app.orchestrator import graph
+    from app.core.orchestrator import graph
     
     # Use PROJECT ID as Thread ID for restart-safe persistence
     config = {"configurable": {"thread_id": initial_state['project_id']}}

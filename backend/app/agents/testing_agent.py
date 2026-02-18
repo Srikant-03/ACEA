@@ -28,25 +28,52 @@ class TestingAgent:
         
         state.messages.append("TestingAgent: Running PyTest...")
         try:
-            # Check if pytest is available first?
-            # subprocess.run raises FileNotFoundError if command not found
+            # Parse JSON report for granular errors
+            report_file = os.path.join(project_dir, ".report.json")
+            
+            # Use sys.executable to ensure we use the backend's environment
+            cmd = [sys.executable, "-m", "pytest", "--maxfail=1", "--disable-warnings", "--json-report", f"--json-report-file={report_file}"]
+            
             result = subprocess.run(
-                ["pytest", "--maxfail=1", "--disable-warnings", "--json-report"],
+                cmd,
                 cwd=project_dir, capture_output=True, text=True
             )
             
             if result.returncode != 0:
-                # Issue isn't defined in this file, need to make sure Issue is imported
-                # state.issues is list of Issue objects
-                # Issue(file="PyTest", issue="Unit tests failed", fix="Check logs")
                 from app.agents.state import Issue
-                state.issues.append(Issue(file="PyTest", issue="Unit tests failed", fix="Check logs"))
-                error_msg = f"TestingAgent: PyTest errors: {result.stderr}"
+                
+                # Try to read JSON report
+                try:
+                    import json
+                    if os.path.exists(report_file):
+                        with open(report_file) as f:
+                            report_data = json.load(f)
+                            
+                        for test in report_data.get("tests", []):
+                            if test.get("outcome") == "failed":
+                                # Extract file path from nodeid (e.g. "tests/test_main.py::test_root")
+                                nodeid = test.get("nodeid", "")
+                                file_path = nodeid.split("::")[0] if "::" in nodeid else "unknown"
+                                
+                                message = test.get("call", {}).get("longrepr", "Test failed")
+                                if isinstance(message, dict): message = str(message) # fast safety
+                                
+                                state.issues.append(Issue(file=file_path, issue=f"PyTest Failed: {nodeid}", fix="Check logic"))
+                                state.errors.append(f"FILE: {file_path} - PyTest Failed: {message[:300]}")
+                except Exception as parse_err:
+                     state.messages.append(f"TestingAgent: Failed to parse report: {parse_err}")
+                
+                # Fallback if no specific errors found but return code failed
+                if not state.errors:
+                     state.issues.append(Issue(file="PyTest", issue="Unit tests failed", fix="Check logs"))
+                     state.errors.append(f"FILE: logic - PyTest errors: {result.stderr[:500]}")
+                
+                error_msg = f"TestingAgent: PyTest errors: {result.stderr[:200]}..."
                 state.messages.append(error_msg)
-                state.errors.append(f"PyTest Failed: {result.stderr[:500]}") # Truncate for safety
+                
         except Exception as e:
             state.messages.append(f"TestingAgent: PyTest invocation failed: {e}")
-            state.errors.append(f"PyTest execution error: {str(e)}")
+            state.errors.append(f"FILE: configuration - PyTest execution error: {str(e)}")
 
         state.messages.append("TestingAgent: Running Vitest...")
         try:
@@ -59,7 +86,8 @@ class TestingAgent:
                 state.issues.append(Issue(file="Vitest", issue="Frontend tests failed", fix="Check logs"))
                 error_msg = f"TestingAgent: Vitest errors: {result.stderr}"
                 state.messages.append(error_msg)
-                state.errors.append(f"Vitest Failed: {result.stderr[:500]}")
+                # Assume frontend tests map to frontend files generally
+                state.errors.append(f"FILE: frontend/tests - Vitest Failed: {result.stderr[:500]}")
         except Exception as e:
             from app.agents.state import Issue
             # Optional: don't fail if npm fails (e.g. no frontend)

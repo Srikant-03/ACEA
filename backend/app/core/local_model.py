@@ -203,24 +203,38 @@ class HybridModelClient:
             
             # Check for quota errors
             if "429" in error_str or "quota" in error_str.lower() or "RESOURCE_EXHAUSTED" in error_str:
-                await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "⚠️ API quota exhausted. Switching to local model..."})
+                await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "⚠️ API key exhausted. Rotating..."})
                 
-                # Try Ollama fallback
-                if await self.check_ollama():
-                    self.use_local = True
-                    await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"🏠 Using Ollama: {self.ollama.current_model}"})
+                try:
+                    # Mark current key as exhausted
+                    current_key = self.km.keys[self.km.index]
+                    self.km.mark_exhausted(current_key)
+                    self.km.rotate_key()
                     
-                    # Select best available model
-                    try:
-                        model = await self.ollama.select_best_model()
-                        await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"Selected model: {model}"})
-                    except Exception as e:
-                        await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"⚠️ Local model select error: {e}"})
+                    # Retry with new key
+                    await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "🔄 Retrying with fresh API key..."})
+                    return await self.generate(prompt, json_mode)
                     
-                    return await self.ollama.generate(prompt, json_mode=json_mode)
-                else:
-                    await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "❌ Ollama not running. Start with: ollama serve"})
-                    raise Exception("API quota exhausted and Ollama not available. Run: ollama serve")
+                except RuntimeError as rotation_error:
+                     # All keys exhausted
+                     await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "⚠️ All API keys exhausted. Switching to local model..."})
+                     
+                     # Try Ollama fallback
+                     if await self.check_ollama():
+                         self.use_local = True
+                         await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"🏠 Using Ollama: {self.ollama.current_model}"})
+                         
+                         # Select best available model
+                         try:
+                             model = await self.ollama.select_best_model()
+                             await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"Selected model: {model}"})
+                         except Exception as e:
+                             await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"⚠️ Local model select error: {e}"})
+                         
+                         return await self.ollama.generate(prompt, json_mode=json_mode)
+                     else:
+                        await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "❌ Ollama not running. Start with: ollama serve"})
+                        raise Exception("API quota exhausted and Ollama not available. Run: ollama serve")
             
             # Other errors - re-raise
             raise
