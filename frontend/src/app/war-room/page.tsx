@@ -14,6 +14,10 @@ import { CodeEditor } from "@/components/ide/CodeEditor"
 import { PreviewPanel } from "@/components/preview/PreviewPanel"
 import { cn } from "@/lib/utils"
 import { motion } from "framer-motion"
+import { StatusPanel } from "@/components/war-room/StatusPanel"
+import { LogPanel } from "@/components/war-room/LogPanel"
+import { MetricsDashboard } from "@/components/war-room/MetricsDashboard"
+import { TimeTravel } from "@/components/war-room/TimeTravel"
 import type {
     AgentLog,
     AgentStatusUpdate,
@@ -58,6 +62,11 @@ export default function WarRoomPage() {
     const [showLiveFeed, setShowLiveFeed] = useState(true)
     const [showIDE, setShowIDE] = useState(false)
     const [mounted, setMounted] = useState(false)
+
+    // --- NEW DASHBOARD STATE ---
+    const [states, setStates] = useState<any[]>([]) // Should be AgentState[]
+    const [currentStateIdx, setCurrentStateIdx] = useState<number>(-1)
+    const [metricsData, setMetricsData] = useState<any>({})
 
     // VS Code Full-Screen State
     const [showFullScreenVSCode, setShowFullScreenVSCode] = useState(false)
@@ -109,6 +118,15 @@ export default function WarRoomPage() {
             setFiles(prev => ({ ...prev, [data.path]: data.content }))
         })
 
+        // NEW EVENTS
+        socket.on("state_update", (data: { state: any }) => {
+            setStates(prev => [...prev, data.state])
+            setCurrentStateIdx(prev => prev + 1)
+        })
+        socket.on("metrics", (data: { data: any }) => {
+            setMetricsData(data.data)
+        })
+
         // VS Code ready event - auto-opens full-screen VS Code
         socket.on("vscode_ready", (data: any) => {
             setVscodeUrl(data.vscode_url)
@@ -153,7 +171,10 @@ export default function WarRoomPage() {
     const addLog = (agent: string, message: string, type: string) => {
         // Use a more unique ID generation for safety
         const uniqueId = `${Date.now()}-${Math.random()}`;
-        setLogs(prev => [...prev.slice(-49), { id: uniqueId, agent, message, timestamp: new Date().toLocaleTimeString(), type }])
+        setLogs(prev => {
+            const newLogs = [...prev.slice(-49), { id: uniqueId, agent, message, timestamp: new Date().toLocaleTimeString(), type }];
+            return newLogs;
+        })
     }
 
     const startMission = () => {
@@ -410,6 +431,17 @@ export default function WarRoomPage() {
                                     </div>
                                 ))}
                             </div>
+
+                            {/* NEW DASHBOARD COMPONENTS */}
+                            <div className="space-y-4 mt-6 border-t border-white/5 pt-6">
+                                <StatusPanel agents={agents} />
+                                <MetricsDashboard data={metricsData} />
+                                <TimeTravel
+                                    states={states}
+                                    currentIdx={currentStateIdx}
+                                    onNavigate={setCurrentStateIdx}
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -571,7 +603,7 @@ export default function WarRoomPage() {
                     {/* Right Panel: Fixed Sidebar - Only visible in Code/Preview Mode */}
                     {showIDE && showLiveFeed && (
                         <div className="w-[20%] h-full animate-in slide-in-from-right duration-500 shrink-0 bg-zinc-950/50 backdrop-blur-md rounded-2xl border border-white/5 overflow-hidden">
-                            <LiveFeed logs={logs} />
+                            <LogPanel logs={logs} />
                         </div>
                     )}
                 </div>

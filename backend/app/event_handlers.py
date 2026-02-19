@@ -59,11 +59,38 @@ async def start_mission(sid, data):
     
     # 4. Run Graph Stream
     try:
+        start_time = datetime.now()
         async for event in graph.astream(initial_state, config=config):
             for node_name, state_update in event.items():
                 agent_name = node_name.upper()
                 await sio.emit('agent_status', {'agent_name': agent_name, 'status': 'working'}, room=sid)
                 
+                # Emit State Snapshot for Time Travel
+                if "messages" in state_update:
+                    # Sanitize state for frontend
+                    safe_state = {
+                        "run_id": state_update.get("run_id"),
+                        "current_status": node_name,
+                        "iteration_count": state_update.get("iteration_count"),
+                        "file_system": state_update.get("file_system", {}),
+                        "retry_count": state_update.get("retry_count"),
+                        # Don't send full message history if huge, but for now it's fine
+                        # "messages": [str(m) for m in state_update.get("messages", [])] 
+                    }
+                    await sio.emit('state_update', {'state': safe_state}, room=sid)
+
+                # Emit Metrics
+                current_time = datetime.now()
+                duration = (current_time - start_time).total_seconds() * 1000
+                await sio.emit('metrics', {
+                    'data': {
+                        'steps': state_update.get("iteration_count", 0),
+                        'latency': int(duration), 
+                        'tokens': len(str(state_update)) // 4, # Rough estimate
+                        'cost': 0.0 # Placeholder
+                    }
+                }, room=sid)
+
                 if "messages" in state_update:
                     last_msg = state_update["messages"][-1]
                     await sio.emit('agent_log', {'agent_name': agent_name, 'message': str(last_msg)}, room=sid)
@@ -85,7 +112,15 @@ async def start_mission(sid, data):
                     status = report.get("status", "UNKNOWN")
                     await sio.emit('agent_log', {'agent_name': agent_name, 'message': f"Visual Verification: {status}"}, room=sid)
 
-                await sio.emit('agent_status', {'agent_name': agent_name, 'status': 'idle'}, room=sid)
+                # Refined Status Logic: Don't just reset to idle
+                if "error" in state_update:
+                     await sio.emit('agent_status', {'agent_name': agent_name, 'status': 'error'}, room=sid)
+                else:
+                     await sio.emit('agent_status', {'agent_name': agent_name, 'status': 'success'}, room=sid)
+                
+                # Small delay to let the "Success" state match the visual pulse before next node or idle
+                await asyncio.sleep(0.5) 
+                # await sio.emit('agent_status', {'agent_name': agent_name, 'status': 'idle'}, room=sid) # Optional: keep success state until next run?
 
         await sio.emit('mission_complete', {'project_id': initial_state['project_id']}, room=sid)
         await sio.emit('agent_log', {'agent_name': 'SYSTEM', 'message': 'Mission Sequence Concluded.'}, room=sid)
