@@ -41,15 +41,21 @@ You are The Architect, the brain of ACEA Sentinel.
 
 **TECH STACK PREFERENCE**: {tech_stack}
 
-**CRITICAL FILE COUNT LIMITS**:
-🟢 SIMPLE (todo, calculator, tic-tac-toe, timer, counter): MAX 5-8 files
-🟡 MEDIUM (blog, dashboard, chat app, weather app): MAX 10-15 files
-🔴 COMPLEX (e-commerce, social media, booking system): MAX 18-25 files
+**CRITICAL RULES**:
+1. **DEFAULT TO DYNAMIC**: "Dynamic" is the default project type. Only use "static" if the user EXPLICITLY requests a static site (e.g., "static html", "no backend").
+2. **NO IMPLICIT STATIC**: The presence of HTML files does NOT make a project static.
+3. **FILE LIMITS**:
+   - SIMPLE: Max 5-8 files
+   - MEDIUM: Max 10-15 files
+   - COMPLEX: Max 18-25 files
 
 **OUTPUT FORMAT**: Return ONLY a JSON object (no markdown):
 {{
     "project_name": "string",
     "description": "string",
+    "project_type": "dynamic|static",
+    "primary_stack": "nextjs|vite|react|python|node|static",
+    "rationale": "Short explanation for stack choice",
     "complexity": "simple|medium|complex",
     "tech_stack": "{tech_stack}",
     "file_structure": [
@@ -61,8 +67,9 @@ You are The Architect, the brain of ACEA Sentinel.
 }}
 
 **EXAMPLES**:
-Tic-Tac-Toe (Next.js): page.tsx, layout.tsx, globals.css, tailwind.config.ts, postcss.config.mjs, main.py
-Todo App (Full Stack): page.tsx, layout.tsx, globals.css, tailwind.config.ts, postcss.config.mjs, main.py, database.py, models.py
+1. User: "Make a portfolio" -> project_type: "dynamic", primary_stack: "nextjs"
+2. User: "Static HTML landing page" -> project_type: "static", primary_stack: "static"
+3. User: "Python script" -> project_type: "dynamic", primary_stack: "python"
 """
         
         max_attempts = 3
@@ -81,8 +88,10 @@ Todo App (Full Stack): page.tsx, layout.tsx, globals.css, tailwind.config.ts, po
                 
                 file_count = len(result.get("file_structure", []))
                 complexity = result.get("complexity", "simple")
+                p_type = result.get("project_type", "dynamic")
+                stack = result.get("primary_stack", "unknown")
                 
-                await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"✅ Blueprint: {result['project_name']} ({file_count} files, {complexity})"})
+                await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"✅ Blueprint: {result['project_name']} ({p_type}/{stack}, {file_count} files)"})
                 
                 # --- SAFETY NET: Ensure Config Files Exist & Paths are Correct ---
                 files = result.get("file_structure", [])

@@ -18,6 +18,7 @@ import { StatusPanel } from "@/components/war-room/StatusPanel"
 import { LogPanel } from "@/components/war-room/LogPanel"
 import { MetricsDashboard } from "@/components/war-room/MetricsDashboard"
 import { TimeTravel } from "@/components/war-room/TimeTravel"
+import { Clock } from "lucide-react"
 import type {
     AgentLog,
     AgentStatusUpdate,
@@ -73,6 +74,10 @@ export default function WarRoomPage() {
     const [showWelcomeBanner, setShowWelcomeBanner] = useState(false)
     const [projectType, setProjectType] = useState<string>('')
     const [vsCodePort, setVsCodePort] = useState<number>(3000)
+    const [timeoutSeconds, setTimeoutSeconds] = useState<number>(0)
+
+    // Backend URL
+    const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"
 
     // --- GUARDRAILS STATE ---
     const [appMode, setAppMode] = useState<'preview' | 'studio'>('preview')
@@ -82,6 +87,14 @@ export default function WarRoomPage() {
     // Build file tree for complex explorer
     // We use useMemo to avoid rebuilding on every render
     const fileTree = React.useMemo(() => buildFileTree(fileList), [fileList])
+
+    const addLog = (agent: string, message: string, type: string) => {
+        const uniqueId = `${Date.now()}-${Math.random()}`
+        setLogs(prev => {
+            const newLogs = [...prev.slice(-49), { id: uniqueId, agent, message, timestamp: new Date().toLocaleTimeString(), type }]
+            return newLogs
+        })
+    }
 
     const handleEnterStudio = () => {
         setShowStudioConfirm(true)
@@ -142,6 +155,7 @@ export default function WarRoomPage() {
                 setProjectId(data.project_id)
                 fetchProjectFiles(data.project_id)
                 setShowIDE(true)
+                setActiveTab('preview') // Auto-show preview on completion
             }
         })
         socket.on("generation_started", (data: { file_list: string[] }) => {
@@ -160,18 +174,27 @@ export default function WarRoomPage() {
             setMetricsData(data.data)
         })
 
-        // VS Code ready event - auto-opens full-screen VS Code
         socket.on("vscode_ready", (data: any) => {
             setVscodeUrl(data.vscode_url)
             setPreviewUrl(data.preview_url)
             setSandboxId(data.sandbox_id)
             setProjectType(data.project_type || 'unknown')
             setVsCodePort(data.port || 3000)
-            setShowFullScreenVSCode(true)
+            setShowFullScreenVSCode(false)
             setShowWelcomeBanner(true)
             setExecutionStatus('running')
             setIsLoadingPreview(false)
-            addLog('SYSTEM', `✅ VS Code ready! Preview: ${data.preview_url}`, 'success')
+
+            // Set timeout
+            if (data.timeout) {
+                setTimeoutSeconds(data.timeout)
+            }
+
+            // Auto-switch to preview
+            setShowIDE(true)
+            setActiveTab('preview')
+
+            addLog('SYSTEM', `✅ Studio Ready! Preview: ${data.preview_url}`, 'success')
         })
 
         socket.on("vscode_error", (data: any) => {
@@ -179,7 +202,13 @@ export default function WarRoomPage() {
             setIsLoadingPreview(false)
         })
 
+        // Timer countdown
+        const timerInterval = setInterval(() => {
+            setTimeoutSeconds(prev => prev > 0 ? prev - 1 : 0)
+        }, 1000)
+
         return () => {
+            clearInterval(timerInterval)
             socket.off("connect")
             socket.off("agent_log")
             socket.off("agent_status")
@@ -194,20 +223,11 @@ export default function WarRoomPage() {
 
     const fetchProjectFiles = async (id: string) => {
         try {
-            const res = await fetch(`http://localhost:8000/api/projects/${id}/files`)
+            const res = await fetch(`${API_URL}/api/projects/${id}/files`)
             const data = await res.json()
             setFiles(data); setFileList(Object.keys(data).sort())
             if (Object.keys(data).length > 0) setSelectedFile(Object.keys(data).sort()[0])
         } catch (e) { console.error(e) }
-    }
-
-    const addLog = (agent: string, message: string, type: string) => {
-        // Use a more unique ID generation for safety
-        const uniqueId = `${Date.now()}-${Math.random()}`;
-        setLogs(prev => {
-            const newLogs = [...prev.slice(-49), { id: uniqueId, agent, message, timestamp: new Date().toLocaleTimeString(), type }];
-            return newLogs;
-        })
     }
 
     const startMission = () => {
@@ -225,7 +245,7 @@ export default function WarRoomPage() {
         addLog('SYSTEM', '🚀 Creating E2B cloud sandbox...', 'info')
 
         try {
-            const res = await fetch(`http://localhost:8000/api/execute/${projectId}`, { method: 'POST' })
+            const res = await fetch(`${API_URL}/api/execute/${projectId}`, { method: 'POST' })
             const data = await res.json()
 
             setIsLoadingPreview(false)
@@ -252,7 +272,7 @@ export default function WarRoomPage() {
                 setPreviewTechStack(data.message?.match(/\(([^)]+)\)/)?.[1] || '')
                 setExecutionStatus('running')
                 setExecutionLogs(data.logs || '')
-                setActiveTab('codebase') // Show VS Code in codebase tab
+                setActiveTab('preview') // Switch to Preview tab as requested
                 addLog('SYSTEM', `✅ ${data.message}`, 'success')
                 addLog('SYSTEM', `🌐 Preview: ${data.preview_url}`, 'info')
             } else {
@@ -272,7 +292,7 @@ export default function WarRoomPage() {
         if (!projectId) return
         const interval = setInterval(async () => {
             try {
-                const res = await fetch(`http://localhost:8000/api/logs/${projectId}`)
+                const res = await fetch(`${API_URL}/api/logs/${projectId}`)
                 const data = await res.json()
                 setExecutionLogs(data.logs || '')
             } catch (e) {
@@ -285,23 +305,37 @@ export default function WarRoomPage() {
 
     const handleStop = async () => {
         if (!projectId) return
+
+        // Sync files before stopping (as requested)
+        addLog('SYSTEM', '🔄 Syncing files before shutdown...', 'info')
         try {
-            // Try VS Code stop first, then fallback to regular stop
             try {
-                await fetch(`http://localhost:8000/api/vscode/stop/${projectId}`, { method: 'POST' })
-            } catch {
-                await fetch(`http://localhost:8000/api/stop/${projectId}`, { method: 'POST' })
+                await fetch(`${API_URL}/api/studio/${projectId}/sync`, { method: 'POST' })
+                addLog('SYSTEM', '✅ Files synced.', 'success')
+            } catch (e) {
+                addLog('SYSTEM', '⚠️ Sync failed, stopping anyway...', 'warning')
             }
-            setExecutionStatus('stopped')
-            setShowPreview(false)
-            setShowFullScreenVSCode(false)
-            setShowWelcomeBanner(false)
-            setPreviewUrl(null)
-            setVscodeUrl(null)
-            setSandboxId(null)
-            addLog('SYSTEM', '⏹️ Sandbox stopped', 'warning')
+
+            try {
+                // Try VS Code stop first, then fallback to regular stop
+                try {
+                    await fetch(`${API_URL}/api/vscode/stop/${projectId}`, { method: 'POST' })
+                } catch {
+                    await fetch(`${API_URL}/api/stop/${projectId}`, { method: 'POST' })
+                }
+                setExecutionStatus('stopped')
+                setShowPreview(false)
+                setShowFullScreenVSCode(false)
+                setShowWelcomeBanner(false)
+                setPreviewUrl(null)
+                setVscodeUrl(null)
+                setSandboxId(null)
+                addLog('SYSTEM', '⏹️ Studio Mode stopped', 'warning')
+            } catch (e) {
+                addLog('SYSTEM', 'Failed to stop execution', 'error')
+            }
         } catch (e) {
-            addLog('SYSTEM', 'Failed to stop execution', 'error')
+            console.error(e)
         }
     }
 
@@ -309,7 +343,7 @@ export default function WarRoomPage() {
         if (!projectId) return
         addLog('TESTER', 'Analyzing execution logs...', 'info')
         try {
-            const res = await fetch(`http://localhost:8000/api/debug/${projectId}`, { method: 'POST' })
+            const res = await fetch(`${API_URL}/api/debug/${projectId}`, { method: 'POST' })
             const data = await res.json()
             if (data.issues_found?.length > 0) {
                 data.issues_found.forEach((issue: string) => addLog('TESTER', `Issue: ${issue}`, 'warning'))
@@ -324,7 +358,7 @@ export default function WarRoomPage() {
 
     const handleDownload = async () => {
         if (!projectId) return
-        window.open(`http://localhost:8000/api/projects/${projectId}/download`, '_blank')
+        window.open(`${API_URL}/api/projects/${projectId}/download`, '_blank')
         addLog('SYSTEM', 'Download started', 'success')
     }
 
@@ -332,7 +366,7 @@ export default function WarRoomPage() {
         if (!projectId) return
         addLog('DOCUMENTER', 'Generating README.md...', 'info')
         try {
-            const res = await fetch(`http://localhost:8000/api/generate-docs/${projectId}`, { method: 'POST' })
+            const res = await fetch(`${API_URL}/api/generate-docs/${projectId}`, { method: 'POST' })
             const data = await res.json()
             if (data.status === 'generated') {
                 addLog('DOCUMENTER', 'README.md generated successfully', 'success')
@@ -350,7 +384,7 @@ export default function WarRoomPage() {
 
         addLog('SYSTEM', 'AI editing file...', 'info')
         try {
-            const res = await fetch(`http://localhost:8000/api/update-file-ai/${projectId}`, {
+            const res = await fetch(`${API_URL}/api/update-file-ai/${projectId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -366,6 +400,36 @@ export default function WarRoomPage() {
         } catch (e) {
             addLog('SYSTEM', 'AI edit failed', 'error')
         }
+    }
+
+    const handleDeleteFile = async (path: string) => {
+        if (!projectId) return
+        try {
+            const res = await fetch(`${API_URL}/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`, {
+                method: 'DELETE'
+            })
+            if (res.ok) {
+                addLog('SYSTEM', `Deleted file: ${path}`, 'success')
+                // Remove from local state
+                setFiles(prev => {
+                    const next = { ...prev }
+                    delete next[path]
+                    return next
+                })
+                setFileList(prev => prev.filter(p => p !== path))
+                if (selectedFile === path) setSelectedFile(null)
+            } else {
+                addLog('SYSTEM', 'Failed to delete file', 'error')
+            }
+        } catch (e) {
+            addLog('SYSTEM', 'Error deleting file', 'error')
+        }
+    }
+
+    const formatTime = (seconds: number) => {
+        const mins = Math.floor(seconds / 60)
+        const secs = seconds % 60
+        return `${mins}:${secs.toString().padStart(2, '0')}`
     }
 
     return (
@@ -401,8 +465,20 @@ export default function WarRoomPage() {
                                 )}
 
                                 {showIDE && appMode === 'studio' && (
-                                    <div className="w-full py-2 bg-purple-500/20 border border-purple-500/50 text-purple-300 rounded-xl text-center text-[10px] font-bold font-orbitron tracking-widest animate-pulse">
+                                    <button
+                                        onClick={handleStop}
+                                        className="w-full py-2 bg-purple-500/20 border border-purple-500/50 text-purple-300 hover:bg-purple-500/30 hover:text-white transition-all rounded-xl text-center text-[10px] font-bold font-orbitron tracking-widest animate-pulse flex items-center justify-center gap-2 group"
+                                    >
+                                        <Square className="w-3 h-3 group-hover:text-rose-400" />
                                         STUDIO MODE ACTIVE
+                                    </button>
+                                )}
+
+                                {/* Session Timer */}
+                                {executionStatus === 'running' && timeoutSeconds > 0 && (
+                                    <div className="w-full py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-center gap-2 text-zinc-400 font-mono text-xs">
+                                        <Clock className="w-3 h-3" />
+                                        <span>{formatTime(timeoutSeconds)}</span>
                                     </div>
                                 )}
                             </div>
@@ -456,8 +532,22 @@ export default function WarRoomPage() {
                             {/* Tactical Execution - Compact Toolbar */}
                             <div className="flex gap-2">
                                 {[
-                                    { icon: Play, label: 'RUN SYSTEM', onClick: handleExecute, color: 'text-emerald-300 hover:text-emerald-200' },
-                                    { icon: Square, label: 'STOP SYSTEM', onClick: handleStop, color: 'text-rose-300 hover:text-rose-200' },
+                                    {
+                                        icon: Play,
+                                        label: 'RUN SYSTEM',
+                                        onClick: () => {
+                                            if (executionStatus === 'running') {
+                                                // Just switch to preview tab
+                                                setShowIDE(true)
+                                                setActiveTab('preview')
+                                            } else {
+                                                handleExecute()
+                                            }
+                                        },
+                                        color: executionStatus === 'running'
+                                            ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.3)]'
+                                            : 'text-emerald-300 hover:text-emerald-200'
+                                    },
                                     { icon: Bug, label: 'DEBUG MODULE', onClick: handleDebug, color: 'text-amber-300 hover:text-amber-200' },
                                     { icon: FileText, label: 'DOCS MANIFEST', onClick: () => { }, color: 'text-violet-300 hover:text-violet-200' },
                                     { icon: Download, label: 'EXPORT ZIP', onClick: handleDownload, color: 'text-sky-300 hover:text-sky-200' }
@@ -605,6 +695,7 @@ export default function WarRoomPage() {
                                                         projectId={projectId || 'demo'}
                                                         files={fileTree}
                                                         onFileSelect={setSelectedFile}
+                                                        onFileDelete={handleDeleteFile}
                                                         readOnly={appMode === 'preview'}
                                                         onRefresh={() => projectId && fetchProjectFiles(projectId)}
                                                     />

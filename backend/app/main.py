@@ -29,6 +29,12 @@ origins = [
     "http://127.0.0.1:3000",
 ]
 
+# Add production frontend URL if set
+import os
+frontend_url = os.getenv("FRONTEND_URL")
+if frontend_url:
+    origins.append(frontend_url)
+
 fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

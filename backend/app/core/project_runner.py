@@ -49,46 +49,22 @@ class ProjectRunner:
                 self._log(decoded)
         stream.close()
 
-    async def setup_frontend(self) -> Dict[str, Any]:
-        """Install frontend dependencies and create package.json if missing."""
+    async def setup_frontend(self, install_cmd: str = "npm install") -> Dict[str, Any]:
+        """Install dependencies using the provided command."""
         if not self.frontend_path.exists():
             return {"success": False, "error": "Frontend directory not found"}
         
-        # Check if package.json exists, if not create a basic one
-        package_json = self.frontend_path / "package.json"
-        if not package_json.exists():
-            self._log("Creating package.json...")
-            basic_package = {
-                "name": "generated-app",
-                "version": "0.1.0",
-                "private": True,
-                "scripts": {
-                    "dev": f"next dev -p {self.frontend_port}",
-                    "build": "next build",
-                    "start": "next start"
-                },
-                "dependencies": {
-                    "next": "15.0.0",
-                    "react": "18.3.1",
-                    "react-dom": "18.3.1",
-                    "lucide-react": "latest"
-                },
-                "devDependencies": {
-                    "typescript": "^5.0.0",
-                    "@types/react": "^18.0.0",
-                    "@types/node": "^20.0.0"
-                }
-            }
-            import json
-            with open(package_json, 'w') as f:
-                json.dump(basic_package, f, indent=2)
-        
-        
-        self._log("Installing dependencies (npm install)... this may take a minute.")
+        # If no install command provided (e.g. static), just return success
+        if not install_cmd:
+             self._log("No install command needed.")
+             return {"success": True, "message": "No installation needed"}
+
+        self._log(f"Installing dependencies ({install_cmd})... this may take a minute.")
         try:
             # Use shell=True for Windows compatibility with npm
+            cmd_parts = install_cmd.split()
             process = subprocess.Popen(
-                ["npm", "install"],
+                cmd_parts if len(cmd_parts) > 1 else install_cmd, # Handle both string and list
                 cwd=str(self.frontend_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -102,7 +78,7 @@ class ProjectRunner:
                 err_msg = stderr.decode()
                 stdout_msg = stdout.decode() # also capture stdout as npm often puts errors there
                 full_log = f"{stdout_msg}\n{err_msg}"
-                self._log(f"npm install failed: {err_msg[:200]}") # Log short version
+                self._log(f"Install failed: {err_msg[:200]}") # Log short version
                 return {"success": False, "error": full_log[:3000]} # Return LONG version for Tester
             
             self._log("Dependencies installed successfully.")
@@ -111,8 +87,8 @@ class ProjectRunner:
             self._log(f"Setup Exception: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    async def start_frontend(self) -> Dict[str, Any]:
-        """Start the Next.js dev server."""
+    async def start_frontend(self, run_cmd: str = "npm run dev") -> Dict[str, Any]:
+        """Start the dev server using the provided command."""
         if self.frontend_process and self.frontend_process.poll() is None:
             return {"success": True, "message": "Already running", "port": self.frontend_port, "url": f"http://localhost:{self.frontend_port}"}
         
@@ -134,8 +110,9 @@ class ProjectRunner:
             except Exception as kill_err:
                 self._log(f"Warning: Failed to clear port {self.frontend_port}: {kill_err}")
 
+            cmd_parts = run_cmd.split()
             self.frontend_process = subprocess.Popen(
-                ["npm", "run", "dev"],
+                cmd_parts if len(cmd_parts) > 1 else run_cmd,
                 cwd=str(self.frontend_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

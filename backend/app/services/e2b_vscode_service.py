@@ -39,10 +39,24 @@ class E2BVSCodeService:
         else:
             tech_stack = str(tech_stack).lower()
         
+        # 1. ARCHITECT DECISION (Authoritative)
+        architect_type = blueprint.get("project_type", "dynamic")
+        architect_stack = blueprint.get("primary_stack", "")
+        
+        # If Architect explicitly says STATIC, trust it (but verify it's not actually a framework)
+        if architect_type == "static":
+            return {
+                "install_cmd": "",
+                "run_cmd": "python3 -m http.server 3000 --directory frontend",
+                "port": 3000,
+                "project_type": "static",
+                "work_dir": "/home/user/project"
+            }
+
+        # 2. EXPLICIT CONFIG FILES (Framework Detection)
         # Check for specific files
         has_package_json = any("package.json" in f for f in files.keys())
         has_requirements_txt = any("requirements.txt" in f for f in files.keys())
-        has_index_html = any("index.html" in f for f in files.keys())
         
         # Detect framework from files
         is_nextjs = any("next.config" in f for f in files.keys()) or "next" in tech_stack
@@ -52,13 +66,13 @@ class E2BVSCodeService:
         is_django = "django" in tech_stack or any("manage.py" in f for f in files.keys())
         is_vue = any("vue" in f.lower() for f in files.keys()) or "vue" in tech_stack
         
-        # Default config
+        # Default config (Dynamic Fallback)
         config = {
-            "install_cmd": "",
-            "run_cmd": "",
+            "install_cmd": "npm install" if has_package_json else "",
+            "run_cmd": "npm start" if has_package_json else "echo 'No run command found'",
             "port": 3000,
             "work_dir": "/home/user/project",
-            "project_type": "unknown",
+            "project_type": "nodejs" if has_package_json else "unknown",
             "env_vars": {}
         }
         
@@ -98,14 +112,6 @@ class E2BVSCodeService:
                 "project_type": "react",
                 "env_vars": {"CHOKIDAR_USEPOLLING": "true", "PORT": "3000"}
             })
-        # Generic Node.js
-        elif has_package_json:
-            config.update({
-                "install_cmd": "npm install",
-                "run_cmd": "npm start",
-                "port": 3000,
-                "project_type": "nodejs"
-            })
         # FastAPI
         elif is_fastapi:
             config.update({
@@ -131,15 +137,7 @@ class E2BVSCodeService:
                 "port": 8000,
                 "project_type": "django"
             })
-        # Static HTML
-        elif has_index_html:
-            config.update({
-                "install_cmd": "",
-                "run_cmd": "python3 -m http.server 3000",
-                "port": 3000,
-                "project_type": "static"
-            })
-        # Python script
+        # Python script (Generic)
         elif any(f.endswith(".py") for f in files.keys()):
             entrypoint = blueprint.get("entrypoint", "main.py")
             config.update({
@@ -147,6 +145,14 @@ class E2BVSCodeService:
                 "run_cmd": f"python {entrypoint}",
                 "port": 8000,
                 "project_type": "python"
+            })
+        # Generic Node.js (Fallback for package.json without known framework)
+        elif has_package_json:
+            config.update({
+                "install_cmd": "npm install",
+                "run_cmd": "npm start",
+                "port": 3000,
+                "project_type": "nodejs"
             })
         
         return config
@@ -292,7 +298,7 @@ Open the terminal with **Ctrl+`** (backtick) and run:
             # === Create sandbox ===
             log("🚀 Creating E2B sandbox...")
             try:
-                sandbox = Sandbox.create(api_key=E2B_API_KEY)
+                sandbox = Sandbox.create(api_key=E2B_API_KEY, timeout=E2B_TIMEOUT_SECONDS)
                 sandbox_id = sandbox.sandbox_id
                 log(f"✅ Sandbox ready: {sandbox_id[:8]}...")
             except Exception as e:
@@ -455,7 +461,9 @@ Open the terminal with **Ctrl+`** (backtick) and run:
                 "message": f"VS Code ready ({config['project_type']})",
                 "logs": "\n".join(logs),
                 "project_type": config["project_type"],
-                "port": port
+                "project_type": config["project_type"],
+                "port": port,
+                "timeout": E2B_TIMEOUT_SECONDS
             }
             
         except Exception as e:
@@ -486,6 +494,25 @@ Open the terminal with **Ctrl+`** (backtick) and run:
             return True
         except Exception as e:
             logger.error(f"Failed to sync {filepath} to sandbox: {e}")
+            return False
+    
+    async def delete_file_in_sandbox(self, project_id: str, filepath: str) -> bool:
+        """Delete a file in the active E2B sandbox."""
+        sandbox = self.active_sandboxes.get(project_id)
+        if not sandbox:
+            return False
+        
+        try:
+            info = self.sandbox_info.get(project_id, {})
+            work_dir = info.get("config", {}).get("work_dir", "/home/user/project")
+            full_path = f"{work_dir}/{filepath}"
+            
+            # Delete file
+            sandbox.commands.run(f"rm -rf {full_path}")
+            logger.info(f"Deleted {filepath} in sandbox {project_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete {filepath} in sandbox: {e}")
             return False
     
     def get_sandbox(self, project_id: str) -> Optional[Dict]:

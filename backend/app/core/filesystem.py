@@ -83,6 +83,30 @@ def update_file_content(project_id: str, path: str, content: str) -> bool:
         print(f"Error updating file {path}: {e}")
         return False
 
+def delete_file(project_id: str, path: str) -> bool:
+    """
+    Deletes a specific file. Returns True on success.
+    """
+    full_path = BASE_PROJECTS_DIR / project_id / path
+    
+    # Security check: Ensure we don't delete outside project dir
+    try:
+        full_path.resolve().relative_to((BASE_PROJECTS_DIR / project_id).resolve())
+    except ValueError:
+        return False
+        
+    try:
+        if full_path.exists():
+            if full_path.is_dir():
+                shutil.rmtree(full_path)
+            else:
+                os.remove(full_path)
+            return True
+        return False
+    except Exception as e:
+        print(f"Error deleting file {path}: {e}")
+        return False
+
 import shutil
 
 def archive_project(project_id: str) -> str:

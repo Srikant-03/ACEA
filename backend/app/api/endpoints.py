@@ -133,6 +133,22 @@ async def update_file(project_id: str, request: UpdateFileRequest):
     return {"status": "updated"}
 
 
+@router.delete("/projects/{project_id}/files")
+async def delete_file_endpoint(project_id: str, path: str):
+    from app.core.filesystem import delete_file
+    from app.services.e2b_vscode_service import get_e2b_vscode_service
+    
+    # 1. Delete from local filesystem
+    if not delete_file(project_id, path):
+        raise HTTPException(500, "Failed to delete file")
+    
+    # 2. Delete from sandbox if active
+    e2b = get_e2b_vscode_service()
+    await e2b.delete_file_in_sandbox(project_id, path)
+    
+    return {"status": "deleted"}
+
+
 @router.get("/projects/{project_id}/download")
 async def download_project(project_id: str):
     zip_path = archive_project(project_id)
@@ -182,6 +198,12 @@ async def stop_project(project_id: str):
     from app.services.e2b_vscode_service import get_e2b_vscode_service
     e2b = get_e2b_vscode_service()
     return await e2b.stop_sandbox(project_id)
+
+
+@router.post("/vscode/stop/{project_id}")
+async def stop_vscode_project(project_id: str):
+    """Alias for stop_project to match frontend expectation."""
+    return await stop_project(project_id)
 
 
 # ========================= TESTING AGENT =========================
@@ -465,7 +487,12 @@ async def sync_files_from_studio(project_id: str):
     session = await desktop_service.get_session_by_project(project_id)
     
     if not session:
-        raise HTTPException(404, "No active Studio Mode session")
+        # If no session, just return success to avoid 404 spam in frontend
+        return {
+            "status": "no_session",
+            "files_count": 0,
+            "files": []
+        }
     
     files = await desktop_service.sync_files_from_desktop(session.session_id)
     

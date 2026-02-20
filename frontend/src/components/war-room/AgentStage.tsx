@@ -31,15 +31,20 @@ export function AgentStage({ logs, className }: AgentStageProps) {
 
     // Physics State stored in Ref to avoid React render loop lag, but we sync to State for render
     // Using Ref for calculation, State for commit
-    const physicsState = useRef(AGENTS.map(() => ({
-        x: 20 + Math.random() * 60, // Start somewhat centered
-        y: 20 + Math.random() * 60,
-        vx: (Math.random() - 0.5) * SPEED,
-        vy: (Math.random() - 0.5) * SPEED
-    })))
+    // Physics State stored in Ref
+    // Physics State stored in Ref
+    const INITIAL_AGENTS_STATE = AGENTS.map(() => ({
+        x: 50,
+        y: 50,
+        vx: 0,
+        vy: 0
+    }))
+
+    const physicsState = useRef(INITIAL_AGENTS_STATE)
 
     // Render State
-    const [positions, setPositions] = useState(physicsState.current)
+    const [positions, setPositions] = useState(INITIAL_AGENTS_STATE)
+    const [mounted, setMounted] = useState(false)
     const requestRef = useRef<number | null>(null)
 
     // Log Logic State
@@ -72,7 +77,19 @@ export function AgentStage({ logs, className }: AgentStageProps) {
 
     // Cleanup timeouts
     useEffect(() => {
-        return () => Object.values(timeouts.current).forEach(t => clearTimeout(t))
+        const currentTimeouts = timeouts.current
+        return () => Object.values(currentTimeouts).forEach(t => clearTimeout(t))
+    }, [])
+
+    // INITIALIZE RANDOM POSITIONS (Client Only)
+    useEffect(() => {
+        physicsState.current = AGENTS.map(() => ({
+            x: 20 + Math.random() * 60,
+            y: 20 + Math.random() * 60,
+            vx: (Math.random() - 0.5) * SPEED,
+            vy: (Math.random() - 0.5) * SPEED
+        }))
+        setMounted(true)
     }, [])
 
     // PHYSICS LOOP
@@ -80,7 +97,8 @@ export function AgentStage({ logs, className }: AgentStageProps) {
         const animate = () => {
             // Update Physics
             physicsState.current = physicsState.current.map((agent, i, allAgents) => {
-                let { x, y, vx, vy } = agent
+                const { x, y } = agent
+                let { vx, vy } = agent
 
                 // 1. Wander (Random small pushes)
                 vx += (Math.random() - 0.5) * WANDER_STRENGTH
@@ -140,7 +158,7 @@ export function AgentStage({ logs, className }: AgentStageProps) {
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[40%] h-[40%] border border-zinc-700/20 rounded-full border-dashed animate-[spin_40s_linear_infinite_reverse]" />
             </div>
 
-            {AGENTS.map((agent, index) => (
+            {mounted && AGENTS.map((agent, index) => (
                 <AgentEntity
                     key={agent.name}
                     agent={agent}
