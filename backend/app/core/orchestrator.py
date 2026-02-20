@@ -21,7 +21,8 @@ from app.agents.sentinel import SentinelAgent
 from app.agents.oracle import OracleAgent
 from app.agents.watcher import WatcherAgent
 from app.agents.advisor import AdvisorAgent
-from app.agents.testing_agent import TestingAgent # Added
+from app.agents.testing_agent import TestingAgent
+from app.agents.release import ReleaseAgent  # Phase 2: Release Agent
 
 # LangGraph
 from langgraph.graph import StateGraph, END
@@ -51,7 +52,8 @@ sentinel_agent = SentinelAgent()
 oracle_agent = OracleAgent()
 watcher_agent = WatcherAgent()
 advisor_agent = AdvisorAgent()
-testing_agent = TestingAgent() # Added
+testing_agent = TestingAgent()
+release_agent = ReleaseAgent()  # Phase 2: Release Agent
 
 # Helper to save state manually
 async def save_state(state: AgentState):
@@ -154,7 +156,9 @@ async def virtuoso_node(state: AgentState):
     iteration = state.iteration_count
     
     if errors and iteration > 0:
-        new_files = await _handle_self_healing(sm, errors, current_files, iteration)
+        # Pass visual context from previous watcher run for enriched self-healing
+        visual_context = getattr(state, "visual_report", None)
+        new_files = await _handle_self_healing(sm, errors, current_files, iteration, visual_context)
     else:
         new_files = await _handle_normal_generation(blueprint)
     
@@ -170,13 +174,72 @@ async def virtuoso_node(state: AgentState):
 
     return {"file_system": new_files, "current_status": "code_generated", "errors": []}
 
-async def _handle_self_healing(sm, errors, current_files, iteration):
-    """Handle self-healing mode logic."""
+async def _handle_self_healing(sm, errors, current_files, iteration, visual_context=None):
+    """
+    Handle self-healing mode logic with enhanced visual context.
+    
+    Args:
+        sm: SocketManager for logging
+        errors: List of errors to fix
+        current_files: Current file system state
+        iteration: Current iteration count
+        visual_context: Optional dict with visual artifacts from Watcher
+    """
     await sm.emit("agent_log", {
         "agent_name": "VIRTUOSO", 
         "message": f"🔧 Self-Healing Mode: Patching {len(errors)} errors (Iteration {iteration})..."
     })
-    return await virtuoso_agent.repair_files(current_files, errors)
+    
+    # Enrich errors with visual context if available
+    enriched_errors = errors.copy()
+    if visual_context:
+        visual_summary = []
+        
+        # Add screenshot paths for reference
+        if visual_context.get("screenshot"):
+            visual_summary.append(f"Screenshot: {visual_context['screenshot']}")
+        
+        # Add DOM summary if available
+        if visual_context.get("dom_summary"):
+            dom = visual_context["dom_summary"]
+            if dom.get("title"):
+                visual_summary.append(f"Page title: {dom['title']}")
+            if dom.get("headings"):
+                h1s = [h["text"] for h in dom["headings"] if h.get("level") == "h1"][:2]
+                visual_summary.append(f"Main headings: {', '.join(h1s)}")
+            if dom.get("interactive_elements"):
+                visual_summary.append(f"Interactive elements: {dom['interactive_elements']}")
+        
+        # Add Gemini Vision analysis if available
+        if visual_context.get("gemini_analysis"):
+            analysis = visual_context["gemini_analysis"]
+            if analysis.get("overall_quality"):
+                visual_summary.append(f"Visual QA: {analysis['overall_quality']}")
+            if analysis.get("issues"):
+                vision_issues = [
+                    f"[{i.get('category', 'UI')}] {i.get('description', '')}"
+                    for i in analysis["issues"][:3]  # Limit to 3 most important
+                ]
+                enriched_errors.extend([f"Visual: {vi}" for vi in vision_issues])
+        
+        # Add console errors from watcher
+        if visual_context.get("console_errors"):
+            console_errs = [e.get("text", str(e)) for e in visual_context["console_errors"][:3]]
+            enriched_errors.extend([f"Console: {ce[:100]}" for ce in console_errs])
+        
+        # Add network failures
+        if visual_context.get("network_failures"):
+            net_fails = [f"Network: {n.get('url', 'unknown')} - {n.get('failure', 'failed')}" 
+                        for n in visual_context["network_failures"][:2]]
+            enriched_errors.extend(net_fails)
+        
+        if visual_summary:
+            await sm.emit("agent_log", {
+                "agent_name": "VIRTUOSO",
+                "message": f"Visual context: {'; '.join(visual_summary[:3])}"
+            })
+    
+    return await virtuoso_agent.repair_files(current_files, enriched_errors)
 
 async def _handle_normal_generation(blueprint):
     """Handle normal code generation logic."""
@@ -338,9 +401,76 @@ async def watcher_node(state: AgentState):
             "errors": [str(e)]
         }
 
+
+async def release_node(state: AgentState):
+    """
+    Release Agent node - prepares project for release with deployment artifacts.
+    
+    Generates:
+    - Dockerfile (or platform-specific config)
+    - CI/CD workflows
+    - Release manifest
+    - README if missing
+    """
+    from app.core.socket_manager import SocketManager
+    sm = SocketManager()
+    
+    thread_id = state.project_id
+    print(f"--- RELEASE NODE (Thread: {thread_id}) ---")
+    
+    await sm.emit("agent_log", {
+        "agent_name": "RELEASE", 
+        "message": "Preparing release package...",
+        "metadata": {"thread_id": thread_id, "step": "release"}
+    })
+    
+    try:
+        # Prepare release with deployment artifacts
+        report = await release_agent.prepare_release(
+            project_id=state.project_id,
+            blueprint=state.blueprint,
+            deploy_targets=None,  # Auto-detect best target
+            generate_readme=True,
+            generate_cicd=True
+        )
+        
+        if report.ready:
+            await sm.emit("agent_log", {
+                "agent_name": "RELEASE",
+                "message": f"✅ Release ready! Generated: {', '.join(report.generated_artifacts[:5])}"
+            })
+        else:
+            await sm.emit("agent_log", {
+                "agent_name": "RELEASE",
+                "message": f"⚠️ Release prepared with warnings: {len(report.missing_files)} missing files"
+            })
+        
+        state.current_status = "release_ready"
+        state.messages.append(f"Release prepared with {len(report.generated_artifacts)} artifacts")
+        
+        # Save state
+        await save_state(state)
+        
+        return {
+            "release_report": report.to_dict(),
+            "current_status": "release_ready",
+            "messages": state.messages
+        }
+        
+    except Exception as e:
+        await sm.emit("agent_log", {
+            "agent_name": "RELEASE",
+            "message": f"❌ Release preparation failed: {str(e)[:50]}"
+        })
+        return {
+            "release_report": {"error": str(e)},
+            "current_status": "release_error"
+        }
+
 def router(state: AgentState):
     """
     SELF-HEALING ROUTER
+    Routes to release on success, or back to virtuoso for fixes.
     """
     errors = state.errors
     iteration = state.iteration_count
@@ -348,14 +478,14 @@ def router(state: AgentState):
     
     if errors and len(errors) > 0:
         if iteration >= max_iterations:
-            print(f"Router: Max iterations ({max_iterations}) reached. Ending.")
-            return END
+            print(f"Router: Max iterations ({max_iterations}) reached. Proceeding to release.")
+            return "release"
         
         print(f"Router: Errors found. Routing to Virtuoso for fix (iteration {iteration + 1})")
         return "virtuoso_fix"
     
-    print("Router: No errors. Mission complete!")
-    return END
+    print("Router: No errors. Routing to Release Agent.")
+    return "release"
 
 def increment_iteration(state: AgentState):
     count = state.iteration_count + 1
@@ -371,8 +501,9 @@ builder = StateGraph(AgentState)
 builder.add_node("architect", architect_node)
 builder.add_node("virtuoso", virtuoso_node)
 builder.add_node("sentinel", sentinel_node)
-builder.add_node("testing", testing_node) # Added
+builder.add_node("testing", testing_node)
 builder.add_node("watcher", watcher_node)
+builder.add_node("release", release_node)  # Phase 2: Release Agent node
 builder.add_node("increment_iteration", increment_iteration)
 
 builder.set_entry_point("architect")
@@ -407,9 +538,12 @@ builder.add_conditional_edges(
     router,
     {
         "virtuoso_fix": "increment_iteration",
-        END: END
+        "release": "release"
     }
 )
+
+# Release node goes to END
+builder.add_edge("release", END)
 
 builder.add_edge("increment_iteration", "virtuoso")
 

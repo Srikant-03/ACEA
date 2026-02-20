@@ -542,6 +542,13 @@ Open the terminal with **Ctrl+`** (backtick) and run:
         self.sandbox_info.pop(project_id, None)
         
         return {"status": "stopped", "message": "Sandbox terminated"}
+
+    async def get_logs(self, project_id: str) -> str:
+        """Get logs for an active sandbox."""
+        info = self.sandbox_info.get(project_id)
+        if not info:
+            return ""
+        return info.get("logs", "")
     
     async def cleanup_all(self):
         """Cleanup all active sandboxes (for shutdown)."""

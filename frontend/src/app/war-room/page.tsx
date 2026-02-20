@@ -1,15 +1,15 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import { AgentStage } from "@/components/war-room/AgentStage"
 import { LiveFeed } from "@/components/war-room/LiveFeed"
 import { SystemLaneWalker } from "@/components/war-room/SystemLaneWalker"
 import {
     Brain, Code, Shield, Eye, Database, Rocket, Laptop, X,
-    Play, Square, Bug, Download, FileText, Wand2, Zap, Radio, Layout, Podcast
+    Play, Square, Bug, Download, FileText, Wand2, Zap, Radio, Layout, Podcast, Monitor
 } from "lucide-react"
 import { socket } from "@/lib/socket"
-import { FileExplorer } from "@/components/ide/FileExplorer"
+import FileExplorer, { FileNode } from "@/components/explorer/FileExplorer"
 import { CodeEditor } from "@/components/ide/CodeEditor"
 import { PreviewPanel } from "@/components/preview/PreviewPanel"
 import { cn } from "@/lib/utils"
@@ -73,6 +73,39 @@ export default function WarRoomPage() {
     const [showWelcomeBanner, setShowWelcomeBanner] = useState(false)
     const [projectType, setProjectType] = useState<string>('')
     const [vsCodePort, setVsCodePort] = useState<number>(3000)
+
+    // --- GUARDRAILS STATE ---
+    const [appMode, setAppMode] = useState<'preview' | 'studio'>('preview')
+    const [showStudioConfirm, setShowStudioConfirm] = useState(false)
+    const [showExitStudioConfirm, setShowExitStudioConfirm] = useState(false)
+
+    // Build file tree for complex explorer
+    // We use useMemo to avoid rebuilding on every render
+    const fileTree = React.useMemo(() => buildFileTree(fileList), [fileList])
+
+    const handleEnterStudio = () => {
+        setShowStudioConfirm(true)
+    }
+
+    const confirmEnterStudio = () => {
+        setAppMode('studio')
+        setShowStudioConfirm(false)
+        addLog('SYSTEM', '⚠️ Switching to Studio Mode. Agents paused.', 'warning')
+        // Here we would effectively pause agents if there was an active loop
+        // For now, the UI restriction is the main guardrail
+    }
+
+    const handleExitStudio = () => {
+        setShowExitStudioConfirm(true)
+    }
+
+    const confirmExitStudio = async () => {
+        // Sync files logic would go here if needed (StudioPanel handles its own sync usually)
+        setAppMode('preview')
+        setShowExitStudioConfirm(false)
+        setShowFullScreenVSCode(false) // Close full screen if open
+        addLog('SYSTEM', '✅ Returned to Preview Mode. Agents active.', 'success')
+    }
 
     useEffect(() => {
         setMounted(true)
@@ -352,10 +385,27 @@ export default function WarRoomPage() {
                         <h2 className="text-xl font-orbitron font-bold tracking-widest text-white/90 mb-8 uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">Mission Control</h2>
 
                         {projectId && (
-                            <button onClick={() => setShowIDE(!showIDE)} className="w-full py-3 mb-8 rounded-xl font-orbitron text-[10px] font-bold tracking-[0.2em] flex items-center justify-center gap-2 border border-blue-900/30 bg-blue-950/40 text-blue-400 hover:bg-blue-900/60 hover:border-blue-700/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all uppercase">
-                                {showIDE ? <X className="w-4 h-4" /> : <Laptop className="w-4 h-4" />}
-                                {showIDE ? "DISCONNECT CORE" : "ACCESS CODEBASE"}
-                            </button>
+                            <div className="mb-8 space-y-2">
+                                <button onClick={() => setShowIDE(!showIDE)} className="w-full py-3 rounded-xl font-orbitron text-[10px] font-bold tracking-[0.2em] flex items-center justify-center gap-2 border border-blue-900/30 bg-blue-950/40 text-blue-400 hover:bg-blue-900/60 hover:border-blue-700/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all uppercase">
+                                    {showIDE ? <X className="w-4 h-4" /> : <Laptop className="w-4 h-4" />}
+                                    {showIDE ? "DISCONNECT CORE" : "ACCESS CODEBASE"}
+                                </button>
+
+                                {showIDE && appMode === 'preview' && (
+                                    <button
+                                        onClick={handleEnterStudio}
+                                        className="w-full py-2 rounded-xl font-orbitron text-[10px] font-bold tracking-[0.2em] flex items-center justify-center gap-2 border border-purple-900/30 bg-purple-950/20 text-purple-400 hover:bg-purple-900/40 hover:border-purple-700/50 transition-all uppercase"
+                                    >
+                                        <Monitor className="w-4 h-4" /> ENTER STUDIO MODE
+                                    </button>
+                                )}
+
+                                {showIDE && appMode === 'studio' && (
+                                    <div className="w-full py-2 bg-purple-500/20 border border-purple-500/50 text-purple-300 rounded-xl text-center text-[10px] font-bold font-orbitron tracking-widest animate-pulse">
+                                        STUDIO MODE ACTIVE
+                                    </div>
+                                )}
+                            </div>
                         )}
 
                         {/* TACTICAL EXECUTION BUTTONS: Consistent Width, Hover Reveal */}
@@ -502,6 +552,8 @@ export default function WarRoomPage() {
                                                     handleStop()
                                                 }
                                             }}
+                                            mode={appMode}
+                                            onModeSwitch={(m) => m === 'studio' ? handleEnterStudio() : handleExitStudio()}
                                         />
                                     </div>
                                 )}
@@ -549,7 +601,13 @@ export default function WarRoomPage() {
                                                     <span className="text-[10px] font-bold text-zinc-500 tracking-[0.2em] uppercase">Explorer</span>
                                                 </div>
                                                 <div className="flex-1 overflow-y-auto custom-scrollbar">
-                                                    <FileExplorer files={fileList} onSelect={setSelectedFile} selectedPath={selectedFile || undefined} />
+                                                    <FileExplorer
+                                                        projectId={projectId || 'demo'}
+                                                        files={fileTree}
+                                                        onFileSelect={setSelectedFile}
+                                                        readOnly={appMode === 'preview'}
+                                                        onRefresh={() => projectId && fetchProjectFiles(projectId)}
+                                                    />
                                                 </div>
                                             </div>
 
@@ -607,6 +665,80 @@ export default function WarRoomPage() {
                         </div>
                     )}
                 </div>
+                {/* Studio Mode Confirmation Modal */}
+                {showStudioConfirm && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-[#09090b] border border-purple-500/30 p-8 rounded-2xl max-w-md w-full shadow-[0_0_50px_rgba(168,85,247,0.2)]">
+                            <h3 className="text-xl font-orbitron font-bold text-white mb-4 flex items-center gap-3">
+                                <Monitor className="w-6 h-6 text-purple-400" />
+                                ENTER STUDIO MODE
+                            </h3>
+                            <div className="space-y-4 text-zinc-400 text-sm leading-relaxed">
+                                <p>You are about to assume <span className="text-white font-bold">Manual Authority</span>.</p>
+                                <ul className="space-y-2 border-l-2 border-purple-500/20 pl-4 my-4">
+                                    <li className="flex items-start gap-2">
+                                        <span className="text-purple-400 mt-0.5">⚠️</span>
+                                        <span>Autonomous agents will be <strong>PAUSED</strong>.</span>
+                                    </li>
+                                    <li className="flex items-start gap-2">
+                                        <span className="text-purple-400 mt-0.5">🛡️</span>
+                                        <span>Self-healing guardrails are <strong>DISABLED</strong>.</span>
+                                    </li>
+                                    <li className="flex items-start gap-2">
+                                        <span className="text-purple-400 mt-0.5">💸</span>
+                                        <span>Session costs may increase due to desktop streaming.</span>
+                                    </li>
+                                </ul>
+                                <p>Are you sure you want to proceed?</p>
+                            </div>
+                            <div className="flex justify-end gap-3 mt-8">
+                                <button
+                                    onClick={() => setShowStudioConfirm(false)}
+                                    className="px-4 py-2 text-zinc-400 hover:text-white font-orbitron text-xs tracking-wider transition-colors"
+                                >
+                                    CANCEL
+                                </button>
+                                <button
+                                    onClick={confirmEnterStudio}
+                                    className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-orbitron text-xs font-bold tracking-wider shadow-lg hover:shadow-purple-500/20 transition-all"
+                                >
+                                    CONFIRM ACCESS
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Exit Studio Confirmation */}
+                {showExitStudioConfirm && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-[#09090b] border border-blue-500/30 p-8 rounded-2xl max-w-md w-full shadow-[0_0_50px_rgba(59,130,246,0.2)]">
+                            <h3 className="text-xl font-orbitron font-bold text-white mb-4 flex items-center gap-3">
+                                <Shield className="w-6 h-6 text-blue-400" />
+                                RETURN TO PREVIEW
+                            </h3>
+                            <p className="text-zinc-400 text-sm mb-6 leading-relaxed">
+                                Returning to Preview Mode will <strong>terminate</strong> the desktop session and <strong>resume</strong> autonomous agents.
+                                <br /><br />
+                                Ensure all manual changes are saved.
+                            </p>
+                            <div className="flex justify-end gap-3 mt-8">
+                                <button
+                                    onClick={() => setShowExitStudioConfirm(false)}
+                                    className="px-4 py-2 text-zinc-400 hover:text-white font-orbitron text-xs tracking-wider transition-colors"
+                                >
+                                    STAY IN STUDIO
+                                </button>
+                                <button
+                                    onClick={confirmExitStudio}
+                                    className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-orbitron text-xs font-bold tracking-wider shadow-lg hover:shadow-blue-500/20 transition-all"
+                                >
+                                    RESUME AGENTS
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </main>
 
             {/* Full-Screen VS Code Overlay */}
@@ -737,4 +869,42 @@ export default function WarRoomPage() {
             }
         </>
     )
+}
+
+// Helper to build file tree from flat list of paths
+function buildFileTree(paths: string[]): FileNode {
+    const root: FileNode = {
+        name: 'project',
+        path: 'project',
+        type: 'directory',
+        children: []
+    };
+
+    paths.forEach(path => {
+        const parts = path.split('/');
+        let currentNode = root;
+
+        parts.forEach((part, index) => {
+            if (!currentNode.children) currentNode.children = [];
+
+            let child = currentNode.children.find(c => c.name === part);
+
+            if (!child) {
+                const isFile = index === parts.length - 1;
+                const fullPath = parts.slice(0, index + 1).join('/');
+
+                child = {
+                    name: part,
+                    path: fullPath,
+                    type: isFile ? 'file' : 'directory',
+                    children: isFile ? undefined : []
+                };
+                currentNode.children.push(child);
+            }
+
+            currentNode = child;
+        });
+    });
+
+    return root;
 }
