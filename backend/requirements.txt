@@ -26,6 +26,5 @@ python-multipart
 python-socketio
 redis
 requests
-semgrep
 sqlalchemy
 uvicorn
