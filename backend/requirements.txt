@@ -27,4 +27,5 @@ python-socketio
 redis
 requests
 sqlalchemy
+sqlmodel>=0.0.16
 uvicorn
