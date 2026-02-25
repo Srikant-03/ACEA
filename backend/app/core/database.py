@@ -1,9 +1,14 @@
 from sqlmodel import SQLModel, create_engine, Session
 from app.core.config import settings
 
+# check_same_thread is SQLite-only — PostgreSQL will crash with it
+_connect_args = {}
+if settings.DATABASE_URL.startswith("sqlite"):
+    _connect_args["check_same_thread"] = False
+
 engine = create_engine(
     settings.DATABASE_URL, 
-    connect_args={"check_same_thread": False},
+    connect_args=_connect_args,
     pool_pre_ping=True,  # Check connection liveliness
     pool_recycle=3600    # Recycle connections every hour
 )

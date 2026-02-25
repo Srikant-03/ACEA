@@ -13,7 +13,7 @@ class KeyManager:
              # Fallback to env or empty list, but orchestrator should provide them.
              print("Warning: KeyManager initialized with no keys.")
              
-        self.keys = keys
+        self.keys = keys or []
         self.index = 0
         self.exhausted: Set[str] = set()
         # list of 30+ Gemini API keys

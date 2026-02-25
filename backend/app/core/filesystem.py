@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 from typing import Dict
 
@@ -19,6 +20,10 @@ def write_project_files(project_id: str, files: Dict[str, str]) -> str:
         os.makedirs(file_path.parent, exist_ok=True)
         
         with open(file_path, "w", encoding="utf-8") as f:
+            # Safety: ensure content is a string (LLM repair can leak dicts)
+            if not isinstance(content, str):
+                import json as _json
+                content = _json.dumps(content, indent=2) if isinstance(content, dict) else str(content)
             f.write(content)
             
     return str(project_dir.absolute())
@@ -33,17 +38,32 @@ def read_project_files(project_id: str) -> Dict[str, str]:
     if not project_dir.exists():
         return {}
         
-    for root, _, filenames in os.walk(project_dir):
+    # Directories to skip (avoid overwhelming LLM context and binary crashes)
+    SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".next", "dist", "build"}
+    
+    # Binary file extensions to skip
+    BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2",
+                   ".ttf", ".eot", ".mp4", ".mp3", ".zip", ".tar", ".gz", ".pyc",
+                   ".pyd", ".so", ".dll", ".exe", ".bin", ".pdf", ".lock"}
+    
+    for root, dirs, filenames in os.walk(project_dir):
+        # Prune skip directories in-place (prevents os.walk from descending)
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        
         for name in filenames:
             full_path = Path(root) / name
             rel_path = full_path.relative_to(project_dir)
             
-            # Skip hidden files or venv
-            if ".git" in str(rel_path) or "__pycache__" in str(rel_path):
+            # Skip binary files by extension
+            if full_path.suffix.lower() in BINARY_EXTS:
                 continue
-                
-            with open(full_path, "r", encoding="utf-8") as f:
-                files[str(rel_path)] = f.read()
+            
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    files[str(rel_path)] = f.read()
+            except Exception:
+                # Skip unreadable files (binary, locked, etc.)
+                pass
                 
     return files
 
@@ -107,7 +127,7 @@ def delete_file(project_id: str, path: str) -> bool:
         print(f"Error deleting file {path}: {e}")
         return False
 
-import shutil
+# shutil is now imported at the top of the file
 
 def archive_project(project_id: str) -> str:
     """
