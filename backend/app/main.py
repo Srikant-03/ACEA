@@ -1,3 +1,11 @@
+# Fix Windows event loop BEFORE any async imports.
+# uvicorn reload=True spawns child processes that lose the policy set in run_backend.py.
+# Playwright requires ProactorEventLoop for subprocess creation on Windows.
+import sys
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 # Load environment variables from .env first
 from dotenv import load_dotenv
 load_dotenv()
@@ -23,17 +31,27 @@ fastapi_app = FastAPI(
     lifespan=lifespan
 )
 
-# Configure CORS
+# Configure CORS — works for both local dev and production
+import os
+
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 
-# Add production frontend URL if set
-import os
-frontend_url = os.getenv("FRONTEND_URL")
+# Add production frontend URL if set (e.g. https://your-app.vercel.app)
+frontend_url = os.getenv("FRONTEND_URL", "")
 if frontend_url:
     origins.append(frontend_url)
+    # Also allow the bare domain without trailing slash
+    if frontend_url.endswith("/"):
+        origins.append(frontend_url.rstrip("/"))
+
+# On Railway / production, also allow all Vercel preview URLs
+environment = os.getenv("ENVIRONMENT", "development")
+if environment == "production":
+    # Vercel preview deployments use random subdomains
+    origins.append("https://*.vercel.app")
 
 fastapi_app.add_middleware(
     CORSMiddleware,
@@ -41,6 +59,8 @@ fastapi_app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Allow regex pattern for Vercel preview deployments in production
+    allow_origin_regex=r"https://.*\.vercel\.app" if environment == "production" else None,
 )
 
 # Import sio from socket_manager (no circular import)
@@ -54,9 +74,8 @@ from app import event_handlers
 from app.api import endpoints
 fastapi_app.include_router(endpoints.router, prefix="/api")
 
-# Mount Static Files (Generated Projects)
+# Mount Static Files (Generated Projects) — works on both local and Railway
 from fastapi.staticfiles import StaticFiles
-import os
 
 PROJECTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_projects")
 os.makedirs(PROJECTS_DIR, exist_ok=True)
@@ -74,14 +93,13 @@ app = socketio.ASGIApp(sio, fastapi_app)
 # Health endpoints need to be attached to the inner FastAPI app
 @fastapi_app.get("/")
 async def root():
-    return {"message": "ACEA Sentinel System Online", "status": "active"}
+    return {"message": "ACEA Sentinel System Online", "status": "active", "environment": environment}
 
 @fastapi_app.get("/health")
 async def health_check():
     redis_status = "disabled"
-    db_status = "active" # SQLite is always active file-based
+    db_status = "active"
     
-    import os
     if os.getenv("USE_REDIS_PERSISTENCE", "false").lower() == "true":
          try:
              import redis.asyncio as redis
@@ -95,10 +113,9 @@ async def health_check():
 
     return {
         "status": "healthy", 
+        "environment": environment,
         "services": {
             "database": db_status, 
             "redis": redis_status
         }
     }
-
-

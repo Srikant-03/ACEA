@@ -8,6 +8,11 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional
 import asyncio
+import logging
+
+from app.core.sandbox_guard import SandboxGuard
+
+logger = logging.getLogger(__name__)
 
 
 class SecurityScanner:
@@ -21,14 +26,17 @@ class SecurityScanner:
         self.semgrep_available = self._check_tool("semgrep")
         self.npm_available = self._check_tool("npm")
         
-        # Log availability (helps debugging)
-        import logging
-        logger = logging.getLogger(__name__)
         logger.info(f"Security tools - Bandit: {self.bandit_available}, Semgrep: {self.semgrep_available}, npm: {self.npm_available}")
     
     def _check_tool(self, tool_name: str) -> bool:
         """Check if a security tool is installed."""
         try:
+            guard = SandboxGuard(project_root=os.getcwd())
+            cmd_str = f"{tool_name} --version"
+            allowed, reason = guard.check_command(cmd_str)
+            if not allowed:
+                logger.warning(f"SandboxGuard blocked tool check: {cmd_str} — {reason}")
+                return False
             subprocess.run(
                 [tool_name, "--version"],
                 capture_output=True,
@@ -52,7 +60,13 @@ class SecurityScanner:
                 tmp.write(content)
                 tmp_path = tmp.name
             
-            # Run Bandit
+            # Run Bandit (guarded)
+            cmd_str = f"bandit -f json {tmp_path}"
+            guard = SandboxGuard(project_root=tempfile.gettempdir())
+            allowed, reason = guard.check_command(cmd_str)
+            if not allowed:
+                logger.warning(f"SandboxGuard blocked bandit scan: {reason}")
+                return []
             result = subprocess.run(
                 ["bandit", "-f", "json", tmp_path],
                 capture_output=True,
@@ -102,7 +116,13 @@ class SecurityScanner:
                 tmp.write(content)
                 tmp_path = tmp.name
             
-            # Run Semgrep with JavaScript security rules
+            # Run Semgrep with JavaScript security rules (guarded)
+            cmd_str = f"semgrep --config=auto --json --quiet {tmp_path}"
+            guard = SandboxGuard(project_root=tempfile.gettempdir())
+            allowed, reason = guard.check_command(cmd_str)
+            if not allowed:
+                logger.warning(f"SandboxGuard blocked semgrep scan: {reason}")
+                return []
             result = subprocess.run(
                 [
                     "semgrep",
@@ -153,7 +173,12 @@ class SecurityScanner:
                 pkg_path = Path(tmpdir) / "package.json"
                 pkg_path.write_text(package_json_content)
                 
-                # Run npm audit
+                # Run npm audit (guarded)
+                guard = SandboxGuard(project_root=tmpdir)
+                allowed, reason = guard.check_command("npm audit --json")
+                if not allowed:
+                    logger.warning(f"SandboxGuard blocked npm audit: {reason}")
+                    return []
                 result = subprocess.run(
                     ["npm", "audit", "--json"],
                     capture_output=True,
@@ -183,32 +208,68 @@ class SecurityScanner:
     async def fallback_pattern_scan(self, file_path: str, content: str) -> List[dict]:
         """
         Fallback pattern-based scanning when tools unavailable.
-        Preserves original Sentinel behavior.
+        Returns WARNING-level findings only (not HIGH) since these are
+        heuristic matches and should NOT block the pipeline.
+        Only CRITICAL credential patterns (AWS/Stripe keys) remain CRITICAL.
         """
+        import re
         vulnerabilities = []
         
-        dangerous_patterns = [
-            ("eval(", "Code Injection", "HIGH", "Avoid using eval()"),
-            ("exec(", "Code Injection", "HIGH", "Avoid using exec()"),
-            ("os.system(", "Command Injection", "HIGH", "Use subprocess with shell=False"),
-            ("shell=True", "Command Injection", "MEDIUM", "Avoid shell=True in subprocess"),
-            ("password = ", "Hardcoded Secret", "MEDIUM", "Use environment variables"),
-            ("api_key = ", "Hardcoded Secret", "MEDIUM", "Use environment variables"),
-            ("SECRET_KEY = ", "Hardcoded Secret", "MEDIUM", "Use environment variables"),
-            ("dangerouslySetInnerHTML", "XSS Risk", "MEDIUM", "Sanitize HTML content"),
+        # Heuristic patterns — downgraded to WARNING to avoid false-positive blocking
+        simple_patterns = [
+            ("eval(", "Code Injection", "WARNING", "Avoid using eval()"),
+            ("exec(", "Code Injection", "WARNING", "Avoid using exec()"),
+            ("os.system(", "Command Injection", "WARNING", "Use subprocess with shell=False"),
+            ("shell=True", "Command Injection", "WARNING", "Avoid shell=True in subprocess"),
+            ("dangerouslySetInnerHTML", "XSS Risk", "WARNING", "Sanitize HTML content"),
             ("SELECT *", "SQL Security", "LOW", "Consider specific column selection"),
-            ("AKIA[0-9A-Z]{16}", "AWS Access Key", "CRITICAL", "Revoke and use env vars"),
-            ("sk_live_[0-9a-zA-Z]{24}", "Stripe Secret Key", "CRITICAL", "Revoke and use env vars"),
             ("0.0.0.0", "Insecure Binding", "LOW", "Bind to specific interface if possible"),
         ]
         
-        for pattern, vuln_type, severity, fix in dangerous_patterns:
+        # Hardcoded secret patterns — only match actual assignments with literal values
+        secret_patterns = [
+            (r'''(?:password|passwd)\s*=\s*['\"][^'\"]+['\"]''', "Hardcoded Secret", "WARNING", "Use environment variables"),
+            (r'''api_key\s*=\s*['\"][^'\"]+['\"]''', "Hardcoded Secret", "WARNING", "Use environment variables"),
+            (r'''SECRET_KEY\s*=\s*['\"][^'\"]+['\"]''', "Hardcoded Secret", "WARNING", "Use environment variables"),
+        ]
+        
+        # CRITICAL credential patterns — regex-based for precision
+        credential_patterns = [
+            (r"AKIA[0-9A-Z]{16}", "AWS Access Key", "CRITICAL", "Revoke and use env vars"),
+            (r"sk_live_[0-9a-zA-Z]{24}", "Stripe Secret Key", "CRITICAL", "Revoke and use env vars"),
+        ]
+        
+        # Check simple patterns with case-insensitive substring matching
+        for pattern, vuln_type, severity, fix in simple_patterns:
             if pattern.lower() in content.lower():
                 vulnerabilities.append({
                     "type": vuln_type,
                     "severity": severity,
                     "description": f"Found '{pattern}' in {file_path}",
-                    "fix_suggestion": fix
+                    "fix_suggestion": fix,
+                    "source": "fallback"
+                })
+        
+        # Check secret patterns with regex
+        for regex, vuln_type, severity, fix in secret_patterns:
+            if re.search(regex, content, re.IGNORECASE):
+                vulnerabilities.append({
+                    "type": vuln_type,
+                    "severity": severity,
+                    "description": f"Potential hardcoded secret in {file_path}",
+                    "fix_suggestion": fix,
+                    "source": "fallback"
+                })
+        
+        # Check credential patterns with regex (these stay CRITICAL)
+        for regex, vuln_type, severity, fix in credential_patterns:
+            if re.search(regex, content):
+                vulnerabilities.append({
+                    "type": vuln_type,
+                    "severity": severity,
+                    "description": f"Found credential pattern in {file_path}",
+                    "fix_suggestion": fix,
+                    "source": "fallback"
                 })
         
         return vulnerabilities

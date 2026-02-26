@@ -57,6 +57,40 @@ class E2BVSCodeService:
         # Check for specific files
         has_package_json = any("package.json" in f for f in files.keys())
         has_requirements_txt = any("requirements.txt" in f for f in files.keys())
+        has_server_js = any(f.endswith("server.js") for f in files.keys())
+        has_gemfile = any("Gemfile" in f for f in files.keys())
+        has_cargo = any("Cargo.toml" in f for f in files.keys())
+        has_composer = any("composer.json" in f for f in files.keys())
+        has_csproj = any(f.endswith(".csproj") for f in files.keys())
+        has_cmake = any("CMakeLists.txt" in f for f in files.keys())
+        
+        # Parse package.json scripts if available
+        pkg_scripts = {}
+        if has_package_json:
+            import json as _json
+            for f_name, f_content in files.items():
+                if f_name.endswith("package.json") and "/" not in f_name.replace("\\", "/").lstrip("/"):
+                    # Root-level package.json
+                    try:
+                        pkg_data = _json.loads(f_content)
+                        pkg_scripts = pkg_data.get("scripts", {})
+                    except Exception:
+                        pass
+                    break
+        
+        # Determine best run command from scripts
+        def best_run_cmd(scripts: dict) -> str:
+            """Pick the best available run command from package.json scripts."""
+            if "dev" in scripts:
+                return "npm run dev"
+            if "start" in scripts:
+                return "npm start"
+            if "serve" in scripts:
+                return "npm run serve"
+            # If server.js exists, run it directly
+            if has_server_js:
+                return "node server.js"
+            return "npm start"
         
         # Detect framework from files
         is_nextjs = any("next.config" in f for f in files.keys()) or "next" in tech_stack
@@ -69,7 +103,7 @@ class E2BVSCodeService:
         # Default config (Dynamic Fallback)
         config = {
             "install_cmd": "npm install" if has_package_json else "",
-            "run_cmd": "npm start" if has_package_json else "echo 'No run command found'",
+            "run_cmd": best_run_cmd(pkg_scripts) if has_package_json else "echo 'No run command found'",
             "port": 3000,
             "work_dir": "/home/user/project",
             "project_type": "nodejs" if has_package_json else "unknown",
@@ -107,7 +141,7 @@ class E2BVSCodeService:
         elif has_package_json and ("react" in tech_stack or any(".tsx" in f or ".jsx" in f for f in files.keys())):
             config.update({
                 "install_cmd": "npm install",
-                "run_cmd": "npm start",
+                "run_cmd": best_run_cmd(pkg_scripts),
                 "port": 3000,
                 "project_type": "react",
                 "env_vars": {"CHOKIDAR_USEPOLLING": "true", "PORT": "3000"}
@@ -146,17 +180,155 @@ class E2BVSCodeService:
                 "port": 8000,
                 "project_type": "python"
             })
+        # Ruby on Rails
+        elif has_gemfile:
+            # Set GEM_HOME/BUNDLE_PATH to user-writable dir to avoid permission errors
+            gem_env = "export GEM_HOME=$HOME/.gems && export BUNDLE_PATH=$HOME/.gems && export PATH=$HOME/.gems/bin:$PATH"
+            config.update({
+                # Force fresh lockfile generation for Linux to avoid platform conflicts
+                # chmod +x bin/* ensures Rails executables are runnable
+                "install_cmd": f"{gem_env} && chmod +x bin/* || true && rm -f Gemfile.lock && bundle install",
+                # Use ; for db:migrate so migration failure (no DB) doesn't block server startup
+                "run_cmd": f"{gem_env} && bundle exec rails db:migrate 2>/dev/null; {gem_env} && bundle exec rails server -b 0.0.0.0 -p 3000",
+                "port": 3000,
+                "project_type": "rails"
+            })
+        # Rust (Axum/Actix)
+        elif has_cargo:
+            config.update({
+                "install_cmd": "cargo build",
+                "run_cmd": "cargo run",
+                "port": 3000, # Default, can be overridden by env
+                "project_type": "rust",
+                "env_vars": {"PORT": "3000"}
+            })
+        # PHP (Laravel)
+        elif has_composer:
+            config.update({
+                "install_cmd": "composer install",
+                "run_cmd": "php artisan serve --host=0.0.0.0 --port=8000",
+                "port": 8000,
+                "project_type": "php"
+            })
+        # .NET Core
+        elif has_csproj:
+            config.update({
+                "install_cmd": "dotnet restore",
+                "run_cmd": "dotnet run --urls=http://0.0.0.0:5000",
+                "port": 5000,
+                "project_type": "dotnet"
+            })
+        # C++ (CMake)
+        elif has_cmake:
+            config.update({
+                "install_cmd": "cmake . && make",
+                "run_cmd": "./main", # Assumption: executable named main
+                "port": 8080,
+                "project_type": "cpp"
+            })
+        # Express / Node.js with server.js (no framework)
+        # Express / Node.js with server.js (no framework)
+        elif has_server_js:
+            config.update({
+                "install_cmd": "npm install" if has_package_json else "",
+                "run_cmd": "node server.js",
+                "port": 3000,
+                "project_type": "express"
+            })
         # Generic Node.js (Fallback for package.json without known framework)
         elif has_package_json:
             config.update({
                 "install_cmd": "npm install",
-                "run_cmd": "npm start",
+                "run_cmd": best_run_cmd(pkg_scripts),
                 "port": 3000,
                 "project_type": "nodejs"
             })
         
+        # Apply defensive patterns to all commands
+        config["install_cmd"] = self._make_command_defensive(config["install_cmd"], config["project_type"])
+        config["run_cmd"] = self._make_command_defensive(config["run_cmd"], config["project_type"])
+        
         return config
     
+    def _make_command_defensive(self, cmd: str, project_type: str) -> str:
+        """
+        Make install/run commands non-blocking and defensive.
+        Prevents failures due to missing files.
+        """
+        if not cmd:
+            return cmd
+        
+        # Rails: Use bundle exec for rails commands
+        if project_type == "rails":
+            # Don't double up || true — config already includes it
+            if "chmod +x bin/* ||" not in cmd:
+                cmd = cmd.replace("chmod +x bin/*", "chmod +x bin/* || true")
+            cmd = cmd.replace("bin/rails", "bundle exec rails")
+            cmd = cmd.replace("bin/bundle", "bundle")
+        
+        # Django: Check for manage.py before using it
+        elif project_type == "django":
+            if "manage.py" in cmd:
+                # If manage.py works use it, otherwise fallback to module
+                cmd = f"test -f manage.py && {cmd} || python3 -m django {cmd.split('manage.py', 1)[1].strip()}"
+        
+        # Node: Add fallbacks for missing scripts
+        elif project_type in ["nodejs", "nextjs", "react", "vite", "vue", "svelte", "remix", "angular"]:
+            if "npm run" in cmd:
+                # If script doesn't exist, try alternatives. Do NOT silence errors.
+                cmd = f"{cmd} || npm start || node index.js || node server.js"
+        
+        # PHP/Laravel: Check for artisan
+        elif project_type == "laravel":
+            if "artisan" in cmd:
+                cmd = f"test -f artisan && {cmd} || php -S 0.0.0.0:8000 -t public"
+
+        # Python Script: Check for main.py
+        elif project_type == "python":
+            if "main.py" in cmd:
+                cmd = f"test -f main.py && {cmd} || echo 'main.py not found, running directory listing...'"
+
+        return cmd
+
+    
+    def _sanitize_gemfile(self, content: str) -> str:
+        """Sanitize Gemfile content to be Linux-compatible and fix common LLM gem errors."""
+        import re
+        # Remove platforms block: platforms :mingw, ... do ... end
+        # Using DOTALL to match across lines
+        content = re.sub(r'platforms\s+:[a-zA-Z0-9_,\s]+mingw[a-zA-Z0-9_,\s]*do.*?end', '', content, flags=re.DOTALL)
+        
+        # Fix common LLM gem name errors
+        # hotwire-rails was split into turbo-rails + stimulus-rails
+        gem_replacements = {
+            'hotwire-rails': ('turbo-rails', 'stimulus-rails'),
+        }
+        
+        lines = content.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            # Remove Windows-only gems
+            if "gem" in line and ("wdm" in line or "tzinfo-data" in line):
+                continue
+            if "platforms" in line and "mingw" in line:
+                continue
+            
+            # Check for bad gem names and replace
+            replaced = False
+            for bad_gem, replacements in gem_replacements.items():
+                if bad_gem in line and "gem" in line:
+                    # Replace with correct gem(s)
+                    for replacement in replacements:
+                        cleaned_lines.append(f"gem '{replacement}'")
+                    replaced = True
+                    logger.info(f"Gemfile sanitizer: replaced '{bad_gem}' with {replacements}")
+                    break
+            
+            if not replaced:
+                cleaned_lines.append(line)
+            
+        return '\n'.join(cleaned_lines)
+
     def _create_instructions_file(self, preview_url: str, vscode_url: str, config: dict, files: dict) -> str:
         """Generate helpful INSTRUCTIONS.md content."""
         project_type = config.get("project_type", "unknown")
@@ -259,7 +431,10 @@ Open the terminal with **Ctrl+`** (backtick) and run:
             logs.append(msg)
             logger.info(f"[VSCode:{project_id}] {msg}")
             if on_progress:
-                on_progress(msg)
+                import inspect
+                result = on_progress(msg)
+                if inspect.isawaitable(result):
+                    asyncio.ensure_future(result)
         
         def error_response(message: str, user_message: str = None) -> Dict[str, Any]:
             return {
@@ -329,14 +504,23 @@ Open the terminal with **Ctrl+`** (backtick) and run:
             # === Upload files ===
             log("📤 Uploading project files...")
             work_dir = config["work_dir"]
+            sandbox.commands.run(f"mkdir -p {work_dir}")  # Ensure work_dir exists
             uploaded = 0
             
             for file_path, content in project_files.items():
                 if file_path == "blueprint.json":
                     continue
                 
-                full_path = f"{work_dir}/{file_path}"
                 
+                # Normalize Windows backslashes to forward slashes for Linux sandbox
+                file_path_linux = file_path.replace("\\", "/")
+                full_path = f"{work_dir}/{file_path_linux}"
+                
+                # SANITIZATION: Fix Gemfile for Linux environment
+                if file_path.endswith("Gemfile"):
+                    content = self._sanitize_gemfile(content)
+                    log(f"🧹 Sanitized Gemfile for Linux compatibility")
+
                 try:
                     parent_dir = str(Path(full_path).parent)
                     sandbox.commands.run(f"mkdir -p {parent_dir}")
@@ -346,6 +530,62 @@ Open the terminal with **Ctrl+`** (backtick) and run:
                     log(f"Failed to upload {file_path}: {str(e)[:50]}")
             
             log(f"✅ Uploaded {uploaded} files")
+            
+            # === Install System Dependencies (Pre-install) ===
+            ptype = config.get("project_type")
+            log(f"🔧 Checking system dependencies for {ptype}...")
+            
+            if ptype == "rails":
+                 # Install Ruby, Bundler, and build tools
+                 log("📦 Installing Ruby/Rails system dependencies...")
+                 sys_inst = sandbox.commands.run(
+                     "sudo apt-get update && sudo apt-get install -y ruby-full build-essential libsqlite3-dev libyaml-dev libpq-dev nodejs && sudo gem install bundler",
+                     timeout=300
+                 )
+                 if sys_inst.exit_code != 0:
+                     log(f"⚠️ System install failed: {sys_inst.stderr[:200]}")
+                 else:
+                     log("✅ Ruby dependencies installed")
+
+                 # Configure gem paths to be user-writable (avoid permission errors on bundle install)
+                 sandbox.commands.run(
+                     'echo "export GEM_HOME=\$HOME/.gems" >> ~/.bashrc && '
+                     'echo "export BUNDLE_PATH=\$HOME/.gems" >> ~/.bashrc && '
+                     'echo "export PATH=\$HOME/.gems/bin:\$PATH" >> ~/.bashrc',
+                     timeout=10
+                 )
+                 log("✅ Configured gem paths to user-writable directory")
+
+                 # Ensure we start fresh
+                 sandbox.commands.run(f"rm -f {work_dir}/Gemfile.lock")
+                 sandbox.commands.run(f"rm -rf {work_dir}/.bundle")
+
+            elif ptype == "rust":
+                 # Install Rust (if not present)
+                 log("📦 Checking Rust installation...")
+                 check_rust = sandbox.commands.run("cargo --version")
+                 if check_rust.exit_code != 0:
+                     log("📦 Installing Rust...")
+                     sys_inst = sandbox.commands.run(
+                         "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+                         timeout=300
+                     )
+                     # Add source to profile for subsequent commands
+                     config["env_vars"]["PATH"] = "$HOME/.cargo/bin:$PATH"
+                 else:
+                     log("✅ Rust is already installed")
+
+            elif ptype == "php":
+                 # Install PHP and Composer
+                 log("📦 Installing PHP/Composer...")
+                 sys_inst = sandbox.commands.run(
+                     "sudo apt-get update && sudo apt-get install -y php php-cli php-mbstring unzip curl && "
+                     "curl -sS https://getcomposer.org/installer | php && "
+                     "sudo mv composer.phar /usr/local/bin/composer",
+                     timeout=300
+                 )
+                 if sys_inst.exit_code != 0:
+                     log(f"⚠️ PHP install failed: {sys_inst.stderr[:200]}")
             
             # === Create VS Code settings ===
             log("⚙️ Configuring VS Code theme...")
@@ -359,20 +599,28 @@ Open the terminal with **Ctrl+`** (backtick) and run:
                 log(f"⚠️ Settings config error: {str(e)[:50]}")
             
             # === Install dependencies ===
+            install_success = True  # Track install result to gate server start
             if config["install_cmd"]:
-                log(f"📦 Installing dependencies: {config['install_cmd']}")
+                install_cmd = config["install_cmd"]
+                # Use --legacy-peer-deps for robustness
+                if install_cmd == "npm install":
+                    install_cmd = "npm install --legacy-peer-deps"
+                log(f"📦 Installing dependencies: {install_cmd}")
                 try:
                     result = sandbox.commands.run(
-                        config["install_cmd"],
+                        install_cmd,
                         cwd=work_dir,
                         timeout=300
                     )
                     if result.exit_code != 0:
-                        log(f"⚠️ Install warning: {result.stderr[:200] if result.stderr else 'check logs'}")
+                        error_detail = result.stderr or result.stdout or 'check logs'
+                        log(f"⚠️ Install error (exit {result.exit_code}): {error_detail[:500]}")
+                        install_success = False
                     else:
                         log("✅ Dependencies installed")
                 except Exception as e:
-                    log(f"⚠️ Install error: {str(e)[:100]}")
+                    log(f"⚠️ Install error: {str(e)[:200]}")
+                    install_success = False
             
             # === Start code-server ===
             log("🖥️ Starting VS Code server...")
@@ -392,10 +640,20 @@ Open the terminal with **Ctrl+`** (backtick) and run:
             
             # === Start dev server ===
             port = config["port"]
-            if config["run_cmd"]:
+            if config["run_cmd"] and not install_success:
+                log(f"⚠️ Skipping dev server — dependency install failed. Fix the errors above and restart.")
+            elif config["run_cmd"]:
                 log(f"🏃 Starting dev server: {config['run_cmd']}")
+                
+                # 1. Kill anything on the port first
+                try:
+                    sandbox.commands.run(f"fuser -k {port}/tcp || true") 
+                except:
+                    pass
+
                 try:
                     env_str = " ".join(f"{k}={v}" for k, v in config.get("env_vars", {}).items())
+                    # Use setsid to prevent process from dying if shell disconnects (robustness)
                     run_cmd = f"cd {work_dir} && {env_str} {config['run_cmd']} > /tmp/app.log 2>&1 &"
                     sandbox.commands.run(run_cmd, background=True)
                     log(f"✅ Dev server starting on port {port}")
@@ -415,12 +673,23 @@ Open the terminal with **Ctrl+`** (backtick) and run:
                 await asyncio.sleep(2)
             
             # Check app port
-            for attempt in range(10):
+            app_ready = False
+            for attempt in range(15): # Increased wait time
                 check_result = sandbox.commands.run(f"ss -tlnp | grep :{port} || echo ''")
                 if check_result.stdout and str(port) in check_result.stdout:
                     log(f"✅ App ready on port {port}")
+                    app_ready = True
                     break
                 await asyncio.sleep(2)
+            
+            if not app_ready:
+                # RETRIEVE CRASH LOGS
+                log(f"❌ App failed to bind port {port}. retrieving logs...")
+                try:
+                    log_content = sandbox.commands.run("cat /tmp/app.log").stdout
+                    log(f"\n=== APPLICATION CRASH LOG ===\n{log_content[-1000:]}\n===========================")
+                except:
+                    log("Could not read /tmp/app.log")
             
             # === Construct URLs ===
             vscode_host = sandbox.get_host(vscode_port)

@@ -7,6 +7,9 @@ import os
 import json
 import subprocess
 import logging
+import re
+
+from app.core.sandbox_guard import get_sandbox_guard
 import uuid
 
 from app.agents.architect import ArchitectAgent
@@ -82,8 +85,14 @@ def _load_blueprint(project_id: str) -> dict:
 
 
 def check_command(cmd: str) -> bool:
+    """Check if a command exists, validated through SandboxGuard."""
     try:
-        subprocess.run(cmd, shell=True, capture_output=True, timeout=2)
+        guard = get_sandbox_guard()
+        allowed, reason = guard.check_command(cmd)
+        if not allowed:
+            logging.getLogger(__name__).warning(f"check_command blocked: {cmd} — {reason}")
+            return False
+        subprocess.run(cmd.split(), capture_output=True, timeout=2)
         return True
     except Exception:
         return False
@@ -109,6 +118,591 @@ async def run_virtuoso(request: CodeGenRequest):
 async def run_sentinel(request: AuditRequest):
     agent = SentinelAgent()
     return await agent.audit_code(request.file_path, request.code)
+
+
+# ========================= AUTONOMOUS EXECUTION =========================
+
+class AutonomousRequest(BaseModel):
+    repo_url: str = Field(..., description="Git repository URL")
+    objective: str = Field(..., min_length=10, max_length=1000, description="High-level objective")
+    branch: Optional[str] = Field(None, description="Branch to checkout")
+    tech_stack: str = Field(default="Auto-detect", description="Tech stack preference")
+    max_iterations: int = Field(default=3, ge=1, le=10, description="Max self-healing iterations")
+
+    @validator('repo_url')
+    def validate_repo_url(cls, v):
+        v = v.strip()
+        # Block file:// protocol
+        if v.lower().startswith('file://'):
+            raise ValueError('file:// URLs are not allowed')
+        # Block localhost and private IPs
+        blocked = ['localhost', '127.0.0.1', '0.0.0.0', '10.', '192.168.', '172.16.']
+        for b in blocked:
+            if b in v.lower():
+                raise ValueError(f'URL pointing to {b} is not allowed')
+        # Must look like a URL or git path
+        if not re.match(r'^https?://|^git@', v):
+            raise ValueError('repo_url must start with https://, http://, or git@')
+        return v
+
+
+@router.post("/autonomous/execute")
+async def autonomous_execute(request: AutonomousRequest):
+    """
+    Main entry point for autonomous execution on existing repositories.
+    
+    Workflow:
+    1. Clone repository
+    2. Analyze codebase
+    3. Create feature branch
+    4. Generate plan
+    5. Execute plan with self-healing
+    6. Commit changes
+    7. Generate report
+    
+    Returns job_id for tracking via Socket.IO
+    """
+    from app.core.git_adapter import get_git_adapter
+    from app.agents.analyzer import get_analyzer_agent
+    import uuid
+    
+    # Generate unique job ID
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+    
+    try:
+        # 1. Clone repository
+        git_adapter = get_git_adapter()
+        success, message, repo_path = git_adapter.clone_repository(
+            project_id=job_id,
+            repo_url=request.repo_url,
+            branch=request.branch
+        )
+        
+        if not success:
+            raise HTTPException(500, f"Failed to clone repository: {message}")
+        
+        # 2. Create feature branch
+        success, message = git_adapter.create_feature_branch(job_id)
+        if not success:
+            raise HTTPException(500, f"Failed to create branch: {message}")
+        
+        # 3. Analyze repository
+        analyzer = get_analyzer_agent()
+        analysis = await analyzer.analyze_codebase(repo_path, request.objective)
+        
+        # 4-7. Launch the full LangGraph pipeline asynchronously
+        # The graph will handle: plan → execute → test → fix → report
+        import asyncio
+        
+        async def _run_autonomous_pipeline(job_id: str, repo_path: str, analysis: dict, request_data: dict):
+            """Background task that runs the full LangGraph orchestration pipeline."""
+            try:
+                from app.core.orchestrator import graph
+                from app.core.socket_manager import SocketManager
+                
+                sm = SocketManager()
+                await sm.emit("agent_log", {
+                    "agent_name": "SYSTEM",
+                    "message": f"🚀 Starting autonomous pipeline for {request_data['repo_url']}"
+                })
+                
+                initial_state = {
+                    "messages": [],
+                    "project_id": job_id,
+                    "agent_id": job_id,
+                    "run_id": job_id,
+                    "user_prompt": request_data["objective"],
+                    "tech_stack": request_data.get("tech_stack", "Auto-detect"),
+                    "iteration_count": 0,
+                    "max_iterations": request_data.get("max_iterations", 3),
+                    "current_status": "planning",
+                    "file_system": {},
+                    "errors": [],
+                    "retry_count": 0,
+                    # Autonomous-specific fields
+                    "repo_url": request_data["repo_url"],
+                    "repo_path": repo_path,
+                    "feature_branch": f"acea/{job_id}",
+                    "analysis": analysis,
+                }
+                
+                config = {"configurable": {"thread_id": job_id}}
+                
+                async for event in graph.astream(initial_state, config=config):
+                    for node_name, state_update in event.items():
+                        agent_name = node_name.upper()
+                        await sm.emit("agent_status", {"agent_name": agent_name, "status": "working"})
+                        if "messages" in state_update:
+                            last_msg = state_update["messages"][-1]
+                            await sm.emit("agent_log", {"agent_name": agent_name, "message": str(last_msg)})
+                        await sm.emit("agent_status", {"agent_name": agent_name, "status": "success"})
+                
+                # 6. Commit changes if git adapter available
+                try:
+                    from app.core.git_adapter import get_git_adapter
+                    git = get_git_adapter()
+                    git.commit_changes(job_id, f"ACEA: {request_data['objective'][:60]}")
+                    await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "✅ Changes committed to feature branch"})
+                except Exception as commit_err:
+                    await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": f"⚠️ Commit skipped: {commit_err}"})
+                
+                # 7. Signal completion
+                await sm.emit("mission_complete", {"project_id": job_id, "job_id": job_id})
+                await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "🎉 Autonomous pipeline complete"})
+                
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                sm = SocketManager()
+                await sm.emit("mission_error", {"detail": str(e), "job_id": job_id})
+        
+        # Fire-and-forget: launch pipeline in background
+        asyncio.create_task(_run_autonomous_pipeline(
+            job_id, repo_path, analysis,
+            {
+                "repo_url": request.repo_url,
+                "objective": request.objective,
+                "tech_stack": request.tech_stack,
+                "max_iterations": request.max_iterations,
+            }
+        ))
+        
+        return {
+            "job_id": job_id,
+            "status": "executing",
+            "repository": request.repo_url,
+            "objective": request.objective,
+            "analysis": analysis,
+            "message": "Autonomous pipeline launched. Track progress via Socket.IO events."
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Autonomous execution failed: {str(e)}")
+
+
+# ========================= CHECKPOINT & RESUME =========================
+
+@router.get("/checkpoints")
+async def list_checkpoints():
+    """List all available checkpoints."""
+    from app.core.persistence import get_checkpoint_manager
+    from app.core.config import settings
+    
+    manager = get_checkpoint_manager(settings.REDIS_URL)
+    checkpoints = await manager.list_checkpoints()
+    
+    return {
+        "checkpoints": checkpoints,
+        "count": len(checkpoints)
+    }
+
+
+@router.get("/checkpoints/{job_id}")
+async def get_checkpoint(job_id: str):
+    """Get checkpoint details."""
+    from app.core.persistence import get_checkpoint_manager
+    from app.core.config import settings
+    
+    manager = get_checkpoint_manager(settings.REDIS_URL)
+    checkpoint = await manager.load_checkpoint(job_id)
+    
+    if not checkpoint:
+        raise HTTPException(404, "Checkpoint not found")
+    
+    return {
+        "job_id": job_id,
+        "checkpoint": checkpoint
+    }
+
+
+@router.post("/resume/{job_id}")
+async def resume_execution(job_id: str):
+    """
+    Resume execution from checkpoint using ResumeEngine.
+    
+    Workflow:
+    1. Load and validate checkpoint via ResumeEngine
+    2. Reconnect Git, rebuild StrategyEngine
+    3. Determine correct graph entry node (mid-plan resumption)
+    4. Launch pipeline asynchronously from the correct point
+    """
+    from app.core.resume_engine import get_resume_engine, ResumeValidationError
+    import asyncio
+    
+    engine = get_resume_engine()
+    
+    try:
+        state, entry_node = await engine.resume(job_id)
+    except ResumeValidationError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Resume failed: {str(e)}")
+    
+    # Launch the resumed pipeline asynchronously
+    async def _run_resumed_pipeline():
+        try:
+            from app.core.orchestrator import graph
+            from app.core.socket_manager import SocketManager
+            
+            sm = SocketManager()
+            await sm.emit("agent_log", {
+                "agent_name": "SYSTEM",
+                "message": f"🔄 Resuming job {job_id} from node '{entry_node}' "
+                           f"(iteration {state.iteration_count}, "
+                           f"retries {state.total_retries_used}/{state.max_total_retries})"
+            })
+            
+            config = {"configurable": {"thread_id": job_id}}
+            
+            async for event in graph.astream(state, config=config):
+                for node_name, state_update in event.items():
+                    agent_name = node_name.upper()
+                    await sm.emit("agent_status", {"agent_name": agent_name, "status": "working"})
+                    if "messages" in state_update:
+                        last_msg = state_update["messages"][-1]
+                        await sm.emit("agent_log", {"agent_name": agent_name, "message": str(last_msg)})
+                    await sm.emit("agent_status", {"agent_name": agent_name, "status": "success"})
+            
+            await sm.emit("mission_complete", {"project_id": state.project_id, "job_id": job_id})
+            await sm.emit("agent_log", {"agent_name": "SYSTEM", "message": "🎉 Resumed pipeline complete"})
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            sm = SocketManager()
+            await sm.emit("mission_error", {"detail": str(e), "job_id": job_id})
+    
+    asyncio.create_task(_run_resumed_pipeline())
+    
+    return {
+        "job_id": job_id,
+        "status": "resuming",
+        "resume_entry_node": entry_node,
+        "iteration": state.iteration_count,
+        "retries_used": state.total_retries_used,
+        "message": "Execution resumed. Connect via Socket.IO for updates.",
+        "last_checkpoint": getattr(state, '_checkpoint_meta', {})
+    }
+
+
+@router.delete("/checkpoints/{job_id}")
+async def delete_checkpoint(job_id: str):
+    """Delete checkpoint after manual cancellation."""
+    from app.core.persistence import get_checkpoint_manager
+    from app.core.config import settings
+    
+    manager = get_checkpoint_manager(settings.REDIS_URL)
+    success = await manager.delete_checkpoint(job_id)
+    
+    if not success:
+        raise HTTPException(500, "Failed to delete checkpoint")
+    
+    return {"job_id": job_id, "status": "deleted"}
+
+
+# ========================= THOUGHT SIGNATURES =========================
+
+@router.get("/signatures/{project_id}")
+async def get_signatures(project_id: str):
+    """
+    Get all thought signatures for a project.
+    
+    Returns decision trail for audit and debugging.
+    """
+    from app.core.persistence import get_checkpoint_manager
+    from app.core.config import settings
+    
+    manager = get_checkpoint_manager(settings.REDIS_URL)
+    # Load latest checkpoint
+    checkpoint = await manager.load_checkpoint(project_id)
+    
+    if not checkpoint:
+        raise HTTPException(404, "Project not found")
+    
+    signatures = checkpoint.get("thought_signatures", [])
+    
+    return {
+        "project_id": project_id,
+        "signatures": signatures,
+        "count": len(signatures),
+        "agents": list(set(s.get("agent") for s in signatures))
+    }
+
+
+@router.get("/signatures/{project_id}/{signature_id}")
+async def get_signature_detail(project_id: str, signature_id: str):
+    """Get detailed view of single signature."""
+    from app.core.persistence import get_checkpoint_manager
+    from app.core.config import settings
+    
+    manager = get_checkpoint_manager(settings.REDIS_URL)
+    checkpoint = await manager.load_checkpoint(project_id)
+    
+    if not checkpoint:
+        raise HTTPException(404, "Project not found")
+    
+    signatures = checkpoint.get("thought_signatures", [])
+    
+    for sig in signatures:
+        # signatures might be list of dicts if loaded from JSON
+        sig_id = sig.get("signature_id") if isinstance(sig, dict) else sig.signature_id
+        if sig_id == signature_id:
+            return sig
+    
+    raise HTTPException(404, "Signature not found")
+
+
+# ========================= ARTIFACTS =========================
+
+@router.get("/artifacts/{job_id}")
+async def get_artifact_report(job_id: str):
+    """Get complete artifact report for a job."""
+    from pathlib import Path
+    
+    from app.core.artifact_generator import get_artifact_generator
+    gen = get_artifact_generator()
+    report_path = Path(gen.artifacts_dir) / job_id / "report.json"
+    
+    if not report_path.exists():
+        raise HTTPException(404, "Artifact report not found")
+    
+    with open(report_path, encoding='utf-8') as f:
+        report = json.load(f)
+    
+    return report
+
+
+@router.get("/artifacts/{job_id}/download")
+async def download_artifacts(job_id: str):
+    """Download all artifacts as ZIP."""
+    from pathlib import Path
+    import zipfile
+    import tempfile
+    
+    from app.core.artifact_generator import get_artifact_generator
+    gen = get_artifact_generator()
+    job_dir = Path(gen.artifacts_dir) / job_id
+    
+    if not job_dir.exists():
+        raise HTTPException(404, "Artifacts not found")
+    
+    # Create ZIP
+    zip_path = tempfile.mktemp(suffix=".zip")
+    
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file_path in job_dir.rglob("*"):
+            if file_path.is_file():
+                arcname = file_path.relative_to(job_dir)
+                zipf.write(file_path, arcname)
+    
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"{job_id}_artifacts.zip"
+    )
+
+
+# ========================= METRICS & STRATEGY DASHBOARD (G16) =========================
+
+@router.get("/metrics/{job_id}")
+async def get_job_metrics(job_id: str):
+    """
+    Returns MetricsCollector summary for the given job.
+    Includes token usage, latency, cache hit rate, and event timeline.
+    """
+    from app.core.persistence import get_checkpoint_manager
+    from app.core.config import settings
+    
+    manager = get_checkpoint_manager(settings.REDIS_URL)
+    checkpoint = await manager.load_checkpoint(job_id)
+    
+    if not checkpoint:
+        raise HTTPException(404, "Job not found")
+    
+    # Rebuild metrics from checkpoint if available
+    metrics_data = checkpoint.get("metrics", {})
+    
+    # Also try live MetricsCollector if this is the active job
+    try:
+        from app.core.metrics_collector import get_metrics_collector
+        mc = get_metrics_collector()
+        live_summary = mc.summary()
+        # Merge live data with checkpoint data
+        metrics_data = {**metrics_data, **live_summary}
+    except Exception:
+        pass
+    
+    return {
+        "job_id": job_id,
+        "metrics": metrics_data,
+        "has_live_data": bool(metrics_data.get("timers"))
+    }
+
+
+@router.get("/strategy/{job_id}")
+async def get_strategy_history(job_id: str):
+    """
+    Returns StrategyEngine attempt history for the given job.
+    Shows escalation path, retry budget usage, and per-strategy outcomes.
+    """
+    from app.core.persistence import get_checkpoint_manager
+    from app.core.config import settings
+    
+    manager = get_checkpoint_manager(settings.REDIS_URL)
+    checkpoint = await manager.load_checkpoint(job_id)
+    
+    if not checkpoint:
+        raise HTTPException(404, "Job not found")
+    
+    strategy_history = checkpoint.get("strategy_history", [])
+    engine_state = checkpoint.get("strategy_engine_state", {})
+    
+    # Rebuild engine summary if state available
+    engine_summary = {}
+    if engine_state:
+        try:
+            from app.core.strategy_engine import StrategyEngine
+            engine = StrategyEngine.from_dict(engine_state)
+            engine_summary = engine.get_summary()
+        except Exception:
+            pass
+    
+    return {
+        "job_id": job_id,
+        "strategy_history": strategy_history,
+        "total_attempts": len(strategy_history),
+        "retries_used": checkpoint.get("total_retries_used", 0),
+        "max_retries": checkpoint.get("max_total_retries", 5),
+        "engine_summary": engine_summary,
+        "current_strategy": checkpoint.get("current_repair_strategy")
+    }
+
+
+# ========================= DEBUG & DOCUMENTATION =========================
+
+@router.post("/debug/{project_id}")
+async def debug_project(project_id: str):
+    """
+    AI-powered debug analysis for a project.
+    
+    Analyzes execution logs, identifies issues, and suggests fixes
+    using the TesterAgent's diagnostic capabilities.
+    """
+    from app.agents.tester import TesterAgent
+    from pathlib import Path
+    
+    project_dir = BASE_PROJECTS_DIR / project_id
+    if not project_dir.exists():
+        raise HTTPException(404, f"Project not found: {project_id}")
+    
+    # Collect execution logs from multiple sources
+    log_sources = []
+    
+    # 1. Check for execution logs file
+    log_file = project_dir / "execution.log"
+    if log_file.exists():
+        log_sources.append(log_file.read_text(encoding="utf-8", errors="replace"))
+    
+    # 2. Check for npm/build error logs
+    for log_name in ["npm-debug.log", "build.log", "error.log"]:
+        lf = project_dir / log_name
+        if lf.exists():
+            log_sources.append(f"--- {log_name} ---\n{lf.read_text(encoding='utf-8', errors='replace')}")
+    
+    # 3. Scan source files for obvious issues (syntax errors, missing imports)
+    source_files = {}
+    for ext in ["*.py", "*.js", "*.ts", "*.tsx", "*.jsx", "*.html", "*.css"]:
+        for f in project_dir.rglob(ext):
+            if "node_modules" not in str(f) and ".next" not in str(f):
+                try:
+                    rel = str(f.relative_to(project_dir))
+                    source_files[rel] = f.read_text(encoding="utf-8", errors="replace")[:2000]  # First 2KB
+                except Exception:
+                    pass
+    
+    combined_logs = "\n\n".join(log_sources) if log_sources else "No execution logs available."
+    
+    try:
+        tester = TesterAgent()
+        analysis = await tester.analyze_execution(
+            logs=combined_logs,
+            context={
+                "project_id": project_id,
+                "file_count": len(source_files),
+                "files_summary": list(source_files.keys())[:20],
+                "source_snippets": dict(list(source_files.items())[:5])  # Top 5 files for context
+            }
+        )
+        
+        return {
+            "project_id": project_id,
+            "status": "analyzed",
+            "issues_found": analysis.get("issues", []),
+            "suggestions": analysis.get("suggestions", []),
+            "severity": analysis.get("severity", "info"),
+            "quick_check": tester.quick_check(combined_logs) if hasattr(tester, 'quick_check') else None
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Debug analysis failed: {str(e)}")
+
+
+@router.post("/generate-docs/{project_id}")
+async def generate_docs(project_id: str):
+    """
+    Generate README.md documentation for a project.
+    
+    Uses the DocumenterAgent to analyze the project structure
+    and generate comprehensive documentation.
+    """
+    from app.agents.documenter import DocumenterAgent
+    from pathlib import Path
+    
+    project_dir = BASE_PROJECTS_DIR / project_id
+    if not project_dir.exists():
+        raise HTTPException(404, f"Project not found: {project_id}")
+    
+    # Load blueprint if available
+    blueprint = _load_blueprint(project_id)
+    
+    # Build project context from file system
+    project_files = read_project_files(project_id)
+    project_context = {
+        "project_id": project_id,
+        "file_list": sorted(project_files.keys()) if isinstance(project_files, dict) else [],
+        "tech_stack": blueprint.get("tech_stack", "Unknown"),
+        "project_type": blueprint.get("projectType", "frontend"),
+        "project_name": blueprint.get("project_name", project_id),
+    }
+    
+    try:
+        documenter = DocumenterAgent()
+        readme_content = await documenter.generate_readme(
+            context=project_context,
+            blueprint=blueprint
+        )
+        
+        # Write README.md to project directory
+        readme_path = project_dir / "README.md"
+        readme_path.write_text(readme_content, encoding="utf-8")
+        
+        # Also update in-memory file system for frontend
+        return {
+            "status": "generated",
+            "project_id": project_id,
+            "file": "README.md",
+            "content": readme_content,
+            "message": "README.md generated successfully"
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Documentation generation failed: {str(e)}")
 
 
 # ========================= FILESYSTEM =========================
