@@ -24,7 +24,12 @@ class TestingAgent:
         """
         Execute unit and E2E tests. Append failures to state.issues.
         """
-        project_dir = getattr(state, "project_dir", ".")
+        # Derive project directory from project_id — NEVER default to "."
+        # which would run tests against the ACEA backend itself
+        project_dir = getattr(state, "project_dir", None)
+        if not project_dir or project_dir == ".":
+            from app.core.filesystem import BASE_PROJECTS_DIR
+            project_dir = str(BASE_PROJECTS_DIR / state.project_id)
         
         state.messages.append("TestingAgent: Running PyTest...")
         try:
@@ -103,11 +108,15 @@ class TestingAgent:
         self, 
         project_path: str, 
         file_system: Dict[str, str],
-        tech_stack: str = "Auto-detect"
+        tech_stack: str = "Auto-detect",
+        changed_files: Optional[List[str]] = None
     ) -> dict:
         """
         Main entry point: generates tests for all testable files, then runs them.
         Returns comprehensive test report.
+        
+        If changed_files is provided (fix iterations), only regenerates tests for
+        those files while preserving existing tests — avoids ~2 min of LLM overhead.
         """
         from app.core.socket_manager import SocketManager
         sm = SocketManager()
@@ -118,8 +127,8 @@ class TestingAgent:
         framework = await self._detect_framework(project_path, file_system, tech_stack)
         await sm.emit("agent_log", {"agent_name": "TESTING", "message": f"📋 Detected framework: {framework}"})
         
-        # Step 2: Generate test files
-        test_files = await self._generate_tests(file_system, framework, sm)
+        # Step 2: Generate test files (incremental if changed_files provided)
+        test_files = await self._generate_tests(file_system, framework, sm, changed_files=changed_files)
         
         if not test_files:
             await sm.emit("agent_log", {"agent_name": "TESTING", "message": "⚠️ No testable files found"})
@@ -190,10 +199,14 @@ class TestingAgent:
         self, 
         file_system: Dict[str, str],
         framework: str,
-        sm
+        sm,
+        changed_files: Optional[List[str]] = None
     ) -> Dict[str, str]:
         """
-        Generates test code for all testable files using LLM.
+        Generates test code for testable files using LLM.
+        
+        If changed_files is provided, only regenerates tests for those specific
+        source files.  Existing tests for unchanged files are left alone on disk.
         Returns dict of {test_file_path: test_code}
         """
         from app.core.local_model import HybridModelClient
@@ -203,6 +216,24 @@ class TestingAgent:
         
         # Identify testable files (exclude configs, tests, node_modules)
         testable_files = self._find_testable_files(file_system)
+        
+        # Incremental mode: only regenerate tests for changed source files
+        if changed_files:
+            # Normalize changed file paths for comparison
+            changed_set = set(p.replace("\\", "/").strip("/") for p in changed_files)
+            filtered = {}
+            for path, content in testable_files.items():
+                norm = path.replace("\\", "/").strip("/")
+                if norm in changed_set:
+                    filtered[path] = content
+            
+            skipped = len(testable_files) - len(filtered)
+            if skipped > 0:
+                await sm.emit("agent_log", {
+                    "agent_name": "TESTING",
+                    "message": f"⚡ Incremental mode: regenerating tests for {len(filtered)} changed files, keeping {skipped} existing tests"
+                })
+            testable_files = filtered
         
         for file_path, file_content in testable_files.items():
             try:
@@ -425,6 +456,25 @@ Generate the complete test file now:"""
         Executes tests using the detected framework.
         Returns structured test results.
         """
+        # SandboxGuard: validate project path and log test execution
+        from app.core.sandbox_guard import SandboxGuard
+        guard = SandboxGuard(project_root=project_path)
+        
+        # Map framework to the command that will be run (for audit)
+        cmd_map = {
+            "pytest": f"{sys.executable} -m pytest -v --tb=short",
+            "vitest": "npm run test -- --run",
+            "jest": "npm test -- --passWithNoTests"
+        }
+        test_cmd = cmd_map.get(framework, framework)
+        allowed, reason = guard.check_command(test_cmd)
+        if not allowed:
+            return {
+                "success": False,
+                "framework": framework,
+                "error": f"SandboxGuard blocked test command: {reason}"
+            }
+        
         if framework == "pytest":
             return await self._run_pytest(project_path, sm)
         elif framework == "vitest":

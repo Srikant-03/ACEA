@@ -76,7 +76,7 @@ Return valid JSON only. No markdown.
         
         try:
             response = await client.generate(prompt, json_mode=True)
-            result = json.loads(response)
+            result = json.loads(response, strict=False)
             
             status = result.get("status", "unknown")
             issues = result.get("issues", [])

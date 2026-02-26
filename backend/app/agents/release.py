@@ -162,7 +162,7 @@ class ReleaseAgent:
         # 5. Generate release manifest
         manifest = self._generate_release_manifest(project_id, blueprint, tech_stack, targets_used)
         manifest_path = project_path / "release.json"
-        with open(manifest_path, "w") as f:
+        with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
         generated.append("release.json")
         
@@ -563,14 +563,14 @@ jobs:
             blueprint.get("description", "") if blueprint else ""
         )
         
-        with open(project_path / "README.md", "w") as f:
+        with open(project_path / "README.md", "w", encoding="utf-8") as f:
             f.write(readme)
     
     def _write_artifact(self, project_path: Path, artifact: DeploymentArtifact):
         """Write artifact to project directory."""
         artifact_path = project_path / artifact.filename
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(artifact_path, "w") as f:
+        with open(artifact_path, "w", encoding="utf-8") as f:
             f.write(artifact.content)
     
     def _validate_files(self, file_list: List[Path]) -> List[str]:
@@ -642,7 +642,7 @@ htmlcov/
 .coverage
 """
         
-        with open(project_path / ".gitignore", "w") as f:
+        with open(project_path / ".gitignore", "w", encoding="utf-8") as f:
             f.write(base_content)
     
     def create_archive(self, project_id: str) -> str:

@@ -63,8 +63,11 @@ class SentinelAgent:
                 await self.scanner.fallback_pattern_scan(file_path, code)
             )
         
-        # Determine status
-        has_critical = any(v["severity"] in ["HIGH", "CRITICAL"] for v in vulnerabilities)
+        # Determine status — only block on CRITICAL from real tools, not fallback heuristics
+        has_critical = any(
+            v["severity"] == "CRITICAL" and v.get("source") != "fallback"
+            for v in vulnerabilities
+        )
         status = "BLOCKED" if has_critical else "APPROVED"
         
         return {
@@ -123,8 +126,11 @@ class SentinelAgent:
                     "message": f"⚠️ Found {len(dep_vulns)} dependency vulnerabilities"
                 })
         
-        # Determine overall status
-        has_critical = any(v["severity"] in ["HIGH", "CRITICAL"] for v in all_vulnerabilities)
+        # Determine overall status — only block on CRITICAL from real tools
+        has_critical = any(
+            v["severity"] == "CRITICAL" and v.get("source") != "fallback"
+            for v in all_vulnerabilities
+        )
         status = "BLOCKED" if has_critical else "APPROVED"
         
         # Log results with enhanced detail

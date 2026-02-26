@@ -5,6 +5,7 @@
 import asyncio
 import json
 import os
+import sys
 import base64
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -410,10 +411,105 @@ Respond in JSON format:
         REAL browser verification using Playwright.
         Opens the URL, captures screenshot, and checks for errors.
         Includes Visual QA (Vibe Check) with Gemini Vision.
+        
+        On Windows, delegates to a subprocess to avoid event loop issues.
         """
         from app.core.socket_manager import SocketManager
         sm = SocketManager()
         
+        await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Launching browser for {url}..."})
+        
+        # On Windows, use subprocess-based runner to avoid asyncio event loop issues
+        if sys.platform == "win32":
+            return await self._verify_page_subprocess(url, sm)
+        else:
+            return await self._verify_page_direct(url, sm)
+    
+    async def _verify_page_subprocess(self, url: str, sm) -> Dict[str, Any]:
+        """Run Playwright in a separate process (Windows fix for ProactorEventLoop)."""
+        import subprocess
+        
+        try:
+            python_exe = sys.executable
+            runner_module = "app.core.playwright_runner"
+            
+            await sm.emit("agent_log", {
+                "agent_name": "WATCHER",
+                "message": "Using subprocess runner for Windows compatibility..."
+            })
+            
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    [python_exe, "-m", runner_module, url, "--timeout", "30"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/
+                )
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.strip()[:200] if result.stderr else "Unknown error"
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Browser runner error: {error_msg}"})
+                return {
+                    "status": "FAIL",
+                    "errors": [f"Playwright runner failed: {error_msg}"],
+                    "console_logs": [],
+                    "screenshot": None,
+                    "visual_issues": [],
+                    "fix_this": False  # Runner failure is not a code generation issue
+                }
+            
+            import json as _json
+            report = _json.loads(result.stdout.strip())
+            
+            # Run visual QA on screenshot if available
+            if report.get("screenshot") and report["status"] == "PASS":
+                try:
+                    visual_issues = await self.analyze_visuals(
+                        report["screenshot"], report.get("console_logs", []), sm
+                    )
+                    if visual_issues:
+                        report["visual_issues"] = visual_issues
+                        report["errors"].extend([issue['issue'] for issue in visual_issues])
+                        if report["errors"]:
+                            report["status"] = "FAIL"
+                            report["fix_this"] = True
+                except Exception as vis_err:
+                    await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Visual QA skipped: {str(vis_err)[:60]}"})
+            
+            # Emit results
+            if report["status"] == "PASS":
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Page loaded successfully!"})
+            else:
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Found {len(report.get('errors', []))} errors"})
+                for err in report.get("errors", [])[:3]:
+                    await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"  → {str(err)[:100]}"})
+            
+            return report
+            
+        except subprocess.TimeoutExpired:
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "⚠️ Browser verification timed out"})
+            return {
+                "status": "FAIL",
+                "errors": ["Browser verification timed out (60s)"],
+                "console_logs": [],
+                "screenshot": None,
+                "visual_issues": [],
+                "fix_this": False
+            }
+        except Exception as e:
+            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"⚠️ Browser runner error: {str(e)[:80]}"})
+            return {
+                "status": "SKIPPED",
+                "reason": str(e),
+                "errors": [],
+                "fix_this": False
+            }
+    
+    async def _verify_page_direct(self, url: str, sm) -> Dict[str, Any]:
+        """Direct Playwright execution (non-Windows or when subprocess is not needed)."""
         errors = []
         console_logs = []
         screenshot_path = None
@@ -421,8 +517,6 @@ Respond in JSON format:
         
         try:
             from playwright.async_api import async_playwright
-            
-            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Launching browser for {url}..."})
             
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
@@ -455,7 +549,7 @@ Respond in JSON format:
                     
                     await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Screenshot saved: {screenshot_path}"})
                     
-                    # Perform Visual QA (Vibe Check) - Enhanced with Gemini Vision
+                    # Visual QA
                     visual_issues = await self.analyze_visuals(screenshot_path, console_logs, sm)
                     errors.extend([issue['issue'] for issue in visual_issues])
                     
@@ -474,7 +568,8 @@ Respond in JSON format:
             }
         
         except Exception as e:
-            errors.append(f"Browser error: {str(e)}")
+            err_msg = str(e) or type(e).__name__
+            errors.append(f"Browser error: {err_msg}")
         
         # Analyze results
         console_errors = [log for log in console_logs if log["type"] == "error"]
@@ -482,7 +577,7 @@ Respond in JSON format:
         
         if all_errors:
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"Found {len(all_errors)} errors"})
-            for err in all_errors[:3]:  # Show first 3 errors
+            for err in all_errors[:3]:
                 await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"  → {err[:100]}"})
             
             return {
@@ -566,6 +661,11 @@ Respond in JSON format:
         
         # --- 1. DETECT EXECUTION CONFIGURATION ---
         from app.core.filesystem import read_project_files
+        from app.core.project_runner import ProjectRunner
+        
+        # Create runner early so we can use its port
+        runner = ProjectRunner(project_path)
+        port = runner.frontend_port  # 3001 by default — avoids conflict with frontend dev server
         
         # Try to load blueprint for authoritative type
         blueprint = {}
@@ -587,45 +687,124 @@ Respond in JSON format:
         # Configuration Defaults
         install_cmd = "npm install"
         run_cmd = "npm run dev"
-        port = 3000
+        
+        # A. Check for startup_script_or_command file (authoritative if present)
+        startup_file = project_path_obj / "startup_script_or_command"
+        if startup_file.exists():
+            custom_cmd = startup_file.read_text(encoding="utf-8", errors="ignore").strip()
+            if custom_cmd:
+                run_cmd = custom_cmd
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"🔹 Using startup command: {custom_cmd}"})
+        
+        # B. Check for package.json scripts to pick best run command
+        frontend_pkg = runner.frontend_path / "package.json"
+        pkg_scripts = {}
+        if frontend_pkg.exists():
+            try:
+                pkg_data = json.loads(frontend_pkg.read_text(encoding="utf-8", errors="ignore"))
+                pkg_scripts = pkg_data.get("scripts", {})
+            except Exception:
+                pass
         
         # STATIC
         if architect_type == "static":
             install_cmd = ""
-            run_cmd = "python3 -m http.server 3000 --directory frontend"
+            run_cmd = f"python3 -m http.server {port} --directory frontend"
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected STATIC project (explicit)."})
             
         elif any("vite.config" in f for f in files):
              await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected VITE project."})
-             run_cmd = "npm run dev -- --host 0.0.0.0 --port 3000"
+             run_cmd = "npm run dev"
              
         elif any("next.config" in f for f in files):
              await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected NEXT.JS project."})
-             run_cmd = "npm run dev -- --turbo -p 3000"
+             run_cmd = "npm run dev"
              
         elif any("requirements.txt" in f for f in files):
              await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected PYTHON project."})
              install_cmd = "pip install -r requirements.txt"
              # Try to guess run command
              if any("main.py" in f for f in files):
-                 run_cmd = "uvicorn main:app --reload --host 0.0.0.0 --port 3000" # Force port 3000 for consistency?
-                 # Or use 8000 and update port
                  port = 8000
-                 run_cmd = "uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+                 runner.frontend_port = port
+                 run_cmd = f"uvicorn main:app --reload --host 0.0.0.0 --port {port}"
              elif any("app.py" in f for f in files):
                  port = 5000
+                 runner.frontend_port = port
                  run_cmd = "python app.py"
              else:
                  run_cmd = "python main.py"
         
+        elif any("Cargo.toml" in f for f in files):
+             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected RUST project."})
+             install_cmd = "cargo build"
+             run_cmd = "cargo run"
+             port = 3000 # Default for many Rust frameworks, runner handles env var
+             runner.frontend_port = port
+
+        elif any("Gemfile" in f for f in files):
+             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected RUBY/RAILS project."})
+             install_cmd = "bundle install"
+             run_cmd = "rails server -b 0.0.0.0"
+             port = 3000
+             runner.frontend_port = port
+
+        elif any("composer.json" in f for f in files):
+             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected PHP/LARAVEL project."})
+             install_cmd = "composer install"
+             if any("artisan" in f for f in files):
+                 run_cmd = "php artisan serve --host=0.0.0.0"
+             else:
+                 run_cmd = "php -S 0.0.0.0:8000"
+             port = 8000
+             runner.frontend_port = port
+        
+        elif any(f.endswith(".csproj") for f in files):
+             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected .NET project."})
+             install_cmd = "dotnet restore"
+             run_cmd = "dotnet run"
+             # Port handled via ASPNETCORE_URLS in runner
+             port = 5000
+             runner.frontend_port = port
+
+        elif any("CMakeLists.txt" in f for f in files):
+             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected C++ (CMake) project."})
+             # Build process for C++ is multi-step
+             install_cmd = "mkdir -p build && cd build && cmake .. && make"
+             # Naive assumption: executable is named 'main' or 'app'
+             # Ideally Architect should specify this in startup_script_or_command
+             run_cmd = "./build/main" 
+             port = 8080
+             runner.frontend_port = port
+        
+        elif any(f.endswith("server.js") or f.endswith("index.js") or f.endswith("app.js") for f in files):
+             # Express.js / vanilla Node.js server
+             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected NODE/EXPRESS project."})
+             # Pick the best npm script: prefer "dev", fall back to "start"
+             if "dev" in pkg_scripts:
+                 run_cmd = "npm run dev"
+             elif "start" in pkg_scripts:
+                 run_cmd = "npm start"
+             else:
+                 # Direct fallback: run server.js
+                 server_file = None
+                 for f in files:
+                     if f.endswith("server.js"):
+                         server_file = f
+                         break
+                 if server_file:
+                     run_cmd = f"node {server_file.split('/')[-1]}"
+                 else:
+                     run_cmd = "node index.js"
+        
         else:
              await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Defaulting to NODE/DYNAMIC project."})
-             # Fallback
+             # Fallback: use dev if present, else start
+             if "dev" not in pkg_scripts and "start" in pkg_scripts:
+                 run_cmd = "npm start"
+
         
         # --- 2. EXECUTE PROJECT ---
-        from app.core.project_runner import ProjectRunner
-        runner = ProjectRunner(project_path)
-        
         try:
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🚀 Starting Execution Bootstrap..."})
             
@@ -633,38 +812,108 @@ Respond in JSON format:
             if install_cmd:
                 setup_result = await runner.setup_frontend(install_cmd)
                 if not setup_result["success"]:
-                    return {"status": "FAIL", "phase": "setup", "errors": [setup_result["error"]], "fix_this": True}
+                    err_msg = setup_result["error"]
+                    # If tool is missing, skip verification (don't fail)
+                    if setup_result.get("code") == "MISSING_TOOL":
+                        await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"⚠️ Skipped Verification: {err_msg}"})
+                        return {"status": "SKIPPED", "phase": "setup", "errors": [f"Skipped: {err_msg} (Please install tool to verify)"], "fix_this": False}
+                    
+                    await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"❌ Setup Failed: {err_msg}"})
+                    return {"status": "FAIL", "phase": "setup", "errors": [f"Setup Failed ({install_cmd}): {err_msg}"], "fix_this": True}
             
             # Step B: Start Server
             start_result = await runner.start_frontend(run_cmd)
             port = start_result.get("port", port) # Update port if runner assigned one
             
             if not start_result["success"]:
-                # ... (Tester analysis logic logic remains samew, just ensure variables match) ...
-                return {"status": "FAIL", "phase": "startup", "errors": [start_result["error"]], "fix_this": True}
+                err_msg = start_result["error"]
+                await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"❌ Startup Failed: {err_msg}"})
+                return {"status": "FAIL", "phase": "startup", "errors": [f"Startup Failed ({run_cmd}): {err_msg}"], "fix_this": True}
 
             url = start_result.get("url", f"http://localhost:{port}")
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"✅ Server running at {url}"})
             
+            # Notify frontend to auto-show preview
+            await sm.emit("preview_ready", {
+                "url": url,
+                "project_id": project_id,
+                "port": port
+            })
+            
             # --- 3. PHASE 0: SANITY CHECK ---
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Phase 0: Runtime Readiness Check..."})
             
-            # Simple HTTP availability check
+            # Simple HTTP availability check with RETRY
             import httpx
-            try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.get(url, timeout=5.0)
-                    if resp.status_code >= 500:
-                         return {"status": "FAIL", "phase": "sanity_check", "errors": [f"Server returned {resp.status_code}"], "fix_this": True}
-                    await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"✅ HTTP {resp.status_code} OK"})
-            except Exception as e:
-                return {"status": "FAIL", "phase": "sanity_check", "errors": [f"Could not connect to server: {e}"], "fix_this": True}
+            import asyncio
+            connected = False
+            last_error = ""
+            
+            # Increase timeout to 60s for compiled languages (Rust/C++)
+            for attempt in range(12):  # 12 attempts * 5s = 60s max wait
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(url, timeout=5.0)
+                        if resp.status_code < 500:
+                            connected = True
+                            await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"✅ HTTP {resp.status_code} OK"})
+                            break
+                        last_error = f"Server returned {resp.status_code}"
+                except Exception as e:
+                    last_error = str(e)
+                
+                if attempt < 5:
+                    await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"⏳ Waiting for server... ({attempt+1}/6)"})
+                    await asyncio.sleep(5)
+            
+            if not connected:
+                 return {"status": "FAIL", "phase": "sanity_check", "errors": [f"Could not connect to server after 30s: {last_error}"], "fix_this": True}
 
             # --- 4. PHASE 1: BROWSER VERIFICATION ---
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "Phase 1: Browser Validation..."})
             result = await self.verify_page(url)
             
-            # ... (Result handling logic) ...
+            # --- 5. PHASE 2: DEV SERVER LOG ANALYSIS ---
+            # The dev server (Next.js/Vite/webpack) logs compile errors to stdout/stderr.
+            # These are captured by runner._capture_output → runner.logs.
+            # Scan them for errors that HTTP status codes or Playwright may have missed.
+            server_errors = []
+            error_patterns = [
+                "Module not found",
+                "Can't resolve",
+                "SyntaxError",
+                "TypeError",
+                "ReferenceError",
+                "ENOENT",
+                "Cannot find module",
+                "Failed to compile",
+                "Build error",
+                # "Error:" removed because it's too generic and catches "0 errors"
+            ]
+            for log_line in runner.logs:
+                for pattern in error_patterns:
+                    if pattern in log_line:
+                        # Clean up the error line and avoid duplicates
+                        clean = log_line.strip()[:200]
+                        if clean and clean not in server_errors:
+                            server_errors.append(clean)
+                        break  # Only match one pattern per line
+            
+            if server_errors:
+                await sm.emit("agent_log", {
+                    "agent_name": "WATCHER",
+                    "message": f"📋 Found {len(server_errors)} errors in dev server logs"
+                })
+                for err in server_errors[:3]:
+                    await sm.emit("agent_log", {"agent_name": "WATCHER", "message": f"  → {err[:120]}"})
+                
+                # Merge server errors into the Playwright result
+                existing_errors = result.get("errors", [])
+                all_errors = existing_errors + server_errors
+                result["errors"] = all_errors
+                result["status"] = "FAIL"
+                result["fix_this"] = True
+            
             return result
 
         finally:
@@ -686,44 +935,85 @@ Respond in JSON format:
         frontend_dir = BASE_PROJECTS_DIR / project_id / "frontend"
         
         # Check standard frontend paths
-        nextjs_path = frontend_dir / "app" / "page.tsx"
-        vite_idx = frontend_dir / "index.html"
-        vite_src = frontend_dir / "src" / "App.jsx"
-        vite_src_tsx = frontend_dir / "src" / "App.tsx"
-        
-        is_nextjs = nextjs_path.exists()
-        is_vite = vite_idx.exists() or vite_src.exists() or vite_src_tsx.exists()
-        
-        if not (is_nextjs or is_vite):
-            # Fallback: Check if files are at root (common mistake)
-            root_dir = BASE_PROJECTS_DIR / project_id
-            if (root_dir / "index.html").exists():
-                 return {
-                    "status": "FAIL",
-                    "errors": ["Files generated at root instead of /frontend directory"],
-                    "fix_this": True
-                }
+        # Universal Project Structure Check
+        # Check for ANY valid entry point or manifest
+        valid_indicators = [
+            # Node/Frontend
+            frontend_dir / "app" / "page.tsx",
+            frontend_dir / "pages" / "index.tsx",
+            frontend_dir / "src" / "App.jsx",
+            frontend_dir / "src" / "App.tsx",
+            frontend_dir / "src" / "main.ts", # NestJS
+            frontend_dir / "src" / "server.ts", # Express-TS
+            frontend_dir / "index.html",
+            frontend_dir / "package.json",
             
+            # Rust
+            frontend_dir / "Cargo.toml",
+            frontend_dir / "src" / "main.rs",
+            
+            # Python
+            frontend_dir / "requirements.txt",
+            frontend_dir / "main.py",
+            frontend_dir / "app.py",
+            
+            # Ruby
+            frontend_dir / "Gemfile",
+            frontend_dir / "config.ru",
+            
+            # PHP
+            frontend_dir / "composer.json",
+            frontend_dir / "artisan",
+            frontend_dir / "index.php",
+            
+            # .NET
+            *(list(frontend_dir.glob("*.csproj"))),
+            
+            # C++
+            frontend_dir / "CMakeLists.txt",
+            frontend_dir / "src" / "main.cpp",
+        ]
+        
+        # Flatten the list (handle glob results)
+        is_valid = False
+        for path in valid_indicators:
+            if isinstance(path, Path) and path.exists():
+                is_valid = True
+                break
+        
+        if not is_valid:
+             # Check root as fallback
+            root_indicators = [
+                BASE_PROJECTS_DIR / project_id / "Cargo.toml",
+                BASE_PROJECTS_DIR / project_id / "Gemfile",
+                BASE_PROJECTS_DIR / project_id / "composer.json",
+                BASE_PROJECTS_DIR / project_id / "requirements.txt",
+                BASE_PROJECTS_DIR / project_id / "index.html",
+            ]
+            for path in root_indicators:
+                if path.exists():
+                    is_valid = True
+                    break
+
+        if not is_valid:
             return {
                 "status": "FAIL",
-                "errors": ["Valid frontend structure not found (Missing app/page.tsx or src/App.jsx)"],
+                "errors": ["No valid project structure found (Missing manifest or entry point)"],
                 "fix_this": True
             }
         
-        # Determine strict check path
+        # If we found valid files, pass.
+        # Syntax check only for JS/TS/Py files for now
         check_path = frontend_dir
-        if is_nextjs:
-            check_path = frontend_dir / "app"
-        elif is_vite:
-             check_path = frontend_dir / "src"
-             
-        # Check for obvious syntax errors in the files
-        
-        # Check for obvious syntax errors in the files
-        # Check for obvious syntax errors in the files
+        if (frontend_dir / "src").exists():
+            check_path = frontend_dir / "src"
+            
         errors = []
-        # Support both .tsx and .jsx check
-        files_to_check = list(check_path.glob("*.tsx")) + list(check_path.glob("*.jsx"))
+        # Support .tsx, .jsx, .ts, .js, .py, .rs, .php, .rb
+        extensions = ["*.tsx", "*.jsx", "*.ts", "*.js", "*.py", "*.rs", "*.php", "*.rb"]
+        files_to_check = []
+        for ext in extensions:
+            files_to_check.extend(list(check_path.glob(ext)))
         
         for code_file in files_to_check:
             content = code_file.read_text(encoding='utf-8', errors='ignore')

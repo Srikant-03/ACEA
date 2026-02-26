@@ -2,6 +2,7 @@ import subprocess
 import os
 import sys
 from app.core.config import settings
+from app.core.sandbox_guard import SandboxGuard
 class OracleAgent:
     def __init__(self):
         pass
@@ -41,6 +42,12 @@ class OracleAgent:
              return {"passed": True, "details": "No tests found to run."}
              
         try:
+            # Guard subprocess call
+            cmd_str = f"{sys.executable} -m pytest {test_file}"
+            guard = SandboxGuard(project_root=project_path)
+            allowed, reason = guard.check_command(cmd_str)
+            if not allowed:
+                return {"passed": False, "details": f"SandboxGuard blocked test execution: {reason}"}
             # Run pytest
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", test_file], 
