@@ -5,22 +5,54 @@ export interface Issue {
 }
 
 export interface AgentState {
+    // Core identification
     project_id: string;
+    agent_id?: string;
     run_id?: string;
+    user_prompt: string;
+    tech_stack?: string;
+    start_time?: string;
+
+    // Status & loop control
     current_status: string;
     messages: string[];
-    blueprint?: any;
-    user_prompt: string;
-    file_system: Record<string, string>;
     iteration_count: number;
     max_iterations: number;
     errors: string[];
+    retry_count: number;
+
+    // Artifacts
+    blueprint?: any;
+    file_system: Record<string, string>;
+
+    // Validation states
     security_report?: any;
     visual_report?: any;
-    screenshot_paths?: Record<number, string>; // Optional for later
+    test_results?: any;
+    deployment_plan?: any;
+    screenshot_paths?: Record<number, string>;
 
-    // New metrics
-    retry_count: number;
+    // Reasoning & provenance
+    thought_signature?: string;
+    thought_signatures?: any[];
+    reasoning_history?: Array<Record<string, string>>;
+    prior_context?: string;
+
+    // Planning
+    execution_plan?: any[];
+    current_step_id?: string;
+
+    // Git integration
+    repo_url?: string;
+    repo_path?: string;
+    feature_branch?: string;
+    current_branch?: string;
+    commit_history?: any[];
+    initial_commit?: string;
+
+    // QA
+    issues?: any[];
+    analysis?: any;
 }
 
 export type Event =

@@ -18,6 +18,8 @@ import { StatusPanel } from "@/components/war-room/StatusPanel"
 import { LogPanel } from "@/components/war-room/LogPanel"
 import { MetricsDashboard } from "@/components/war-room/MetricsDashboard"
 import { TimeTravel } from "@/components/war-room/TimeTravel"
+import { NetworkMap } from "@/components/war-room/NetworkMap"
+import { SystemHealth } from "@/components/war-room/SystemHealth"
 import { Clock } from "lucide-react"
 import type {
     AgentLog,
@@ -100,12 +102,32 @@ export default function WarRoomPage() {
         setShowStudioConfirm(true)
     }
 
-    const confirmEnterStudio = () => {
-        setAppMode('studio')
+    const confirmEnterStudio = async () => {
         setShowStudioConfirm(false)
-        addLog('SYSTEM', '⚠️ Switching to Studio Mode. Agents paused.', 'warning')
-        // Here we would effectively pause agents if there was an active loop
-        // For now, the UI restriction is the main guardrail
+
+        if (!projectId) {
+            addLog('SYSTEM', '⚠️ No project loaded. Generate a project first.', 'error')
+            return
+        }
+
+        // If E2B sandbox is already running, just switch to studio mode
+        if (executionStatus === 'running' && vscodeUrl) {
+            setAppMode('studio')
+            addLog('SYSTEM', '🖥️ Switching to Studio Mode. Agents still active in background.', 'info')
+            setShowIDE(true)
+            setActiveTab('preview')
+            return
+        }
+
+        // Otherwise, try to start E2B sandbox
+        addLog('SYSTEM', '🚀 Starting Studio Mode (requires E2B)...', 'info')
+        setAppMode('studio')
+
+        // Trigger execution — this will call E2B and set up VS Code
+        await handleExecute()
+
+        // If execution failed (no vscodeUrl set), the error is already shown
+        // The UI will show the error state via executionStatus
     }
 
     const handleExitStudio = () => {
@@ -174,6 +196,29 @@ export default function WarRoomPage() {
             setMetricsData(data.data)
         })
 
+        // NEW: Full Event Synchronization
+        socket.on("artifact_report", (data: any) => {
+            addLog("SYSTEM", `New Artifact: ${data.name}`, "success")
+        })
+
+        socket.on("checkpoint_saved", (data: any) => {
+            // Optional: visual indicator of auto-save
+        })
+
+        socket.on("execution_log", (data: any) => {
+            // Real-time execution logs from backend runners
+            if (data.log) {
+                setExecutionLogs(prev => prev + data.log + "\n")
+            }
+        })
+
+        socket.on("thought_signature", (data: any) => {
+            // Could update a specialized agent thought panel
+            if (data.agent && data.thought) {
+                addLog(data.agent, `💭 ${data.thought}`, "info")
+            }
+        })
+
         socket.on("vscode_ready", (data: any) => {
             setVscodeUrl(data.vscode_url)
             setPreviewUrl(data.preview_url)
@@ -202,6 +247,17 @@ export default function WarRoomPage() {
             setIsLoadingPreview(false)
         })
 
+        // Auto-preview: When the local dev server starts, show it in the preview panel
+        socket.on("preview_ready", (data: any) => {
+            if (data.url) {
+                setPreviewUrl(data.url)
+                setShowPreview(true)
+                setShowIDE(true)
+                setActiveTab('preview')
+                addLog('SYSTEM', `🌐 Preview ready at ${data.url}`, 'success')
+            }
+        })
+
         // Timer countdown
         const timerInterval = setInterval(() => {
             setTimeoutSeconds(prev => prev > 0 ? prev - 1 : 0)
@@ -218,6 +274,13 @@ export default function WarRoomPage() {
             socket.off("file_generated")
             socket.off("vscode_ready")
             socket.off("vscode_error")
+            socket.off("preview_ready")
+            socket.off("state_update")
+            socket.off("metrics")
+            socket.off("artifact_report")
+            socket.off("checkpoint_saved")
+            socket.off("execution_log")
+            socket.off("thought_signature")
         }
     }, [])
 
@@ -492,6 +555,11 @@ export default function WarRoomPage() {
                         <div className="space-y-4">
                             <select value={techStack} onChange={(e) => setTechStack(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl p-3 text-[10px] font-orbitron font-bold uppercase tracking-widest text-slate-400 outline-none hover:border-white/20 transition-colors focus:border-cyan-500/50">
                                 <option value="Auto-detect">AUTO-DETECT PROTOCOL</option>
+                                <option value="Next.js + Tailwind">NEXT.JS + TAILWIND (REACT)</option>
+                                <option value="Python FastAPI">PYTHON FASTAPI (BACKEND)</option>
+                                <option value="Node.js Express">NODE.JS EXPRESS (BACKEND)</option>
+                                <option value="Vue.js + Vite">VUE.JS + VITE</option>
+                                <option value="HTML/CSS/JS">VANILLA HTML/CSS/JS</option>
                             </select>
 
                             {/* Mission Objective Input + Animation Lane */}
@@ -503,7 +571,7 @@ export default function WarRoomPage() {
                                         value={prompt}
                                         onChange={(e) => setPrompt(e.target.value)}
                                         disabled={isProcessing}
-                                        placeholder="ENTER MISSION OBJECTIVES..."
+                                        placeholder={"e.g. Build a modern task management app with user authentication, drag-and-drop kanban board, due dates, and a clean dark-themed UI"}
                                     />
                                 </div>
 
@@ -549,7 +617,7 @@ export default function WarRoomPage() {
                                             : 'text-emerald-300 hover:text-emerald-200'
                                     },
                                     { icon: Bug, label: 'DEBUG MODULE', onClick: handleDebug, color: 'text-amber-300 hover:text-amber-200' },
-                                    { icon: FileText, label: 'DOCS MANIFEST', onClick: () => { }, color: 'text-violet-300 hover:text-violet-200' },
+                                    { icon: FileText, label: 'DOCS MANIFEST', onClick: handleGenerateDocs, color: 'text-violet-300 hover:text-violet-200' },
                                     { icon: Download, label: 'EXPORT ZIP', onClick: handleDownload, color: 'text-sky-300 hover:text-sky-200' }
                                 ].map((btn, i) => (
                                     <div key={i} className="relative group flex-1">
@@ -576,6 +644,8 @@ export default function WarRoomPage() {
                             <div className="space-y-4 mt-6 border-t border-white/5 pt-6">
                                 <StatusPanel agents={agents} />
                                 <MetricsDashboard data={metricsData} />
+                                <SystemHealth />
+                                <NetworkMap />
                                 <TimeTravel
                                     states={states}
                                     currentIdx={currentStateIdx}
