@@ -7,11 +7,17 @@
 ## ✨ Features
 
 - **🏗️ Architect Agent** - Designs system architecture from natural language prompts
-- **💻 Virtuoso Agent** - Generates production-ready code in batches  
-- **🛡️ Sentinel Agent** - Scans for security vulnerabilities
-- **👁️ Watcher Agent** - Validates generated code and triggers self-healing
-- **🔄 Self-Healing Loop** - Automatically fixes errors and regenerates code
-- **☁️ + 🏠 Hybrid AI** - Uses Gemini API with automatic Ollama local model fallback
+- **💻 Virtuoso Agent** - Generates production-ready code with targeted self-healing repair
+- **🛡️ Sentinel Agent** - Scans for security vulnerabilities (XSS, injection, secrets)
+- **🧪 Testing Agent** - Auto-generates and runs tests (pytest, vitest, jest); incremental on fixes
+- **📊 Advisor Agent** - Deployment platform recommendation and cost estimation
+- **👁️ Watcher Agent** - Validates generated code structure and quality
+- **🌐 Browser Validator** - Playwright-based visual regression testing
+- **🔍 Diagnostician Agent** - Root-cause analysis for self-healing loop
+- **🔄 Self-Healing Loop** - Automatically fixes errors (max 3 iterations, strategy-governed)
+- **☁️ + 🏠 Hybrid AI** - Gemini API with exponential backoff + Ollama local fallback
+- **🔒 SandboxGuard** - Command allowlisting, path jailing, and audit trail
+- **📦 Artifact Reports** - Auto-generated JSON/Markdown reports with Git diffs
 
 ## 🖥️ System Requirements
 
@@ -149,28 +155,38 @@ Frontend will be available at: `http://localhost:3000`
 ACEA/
 ├── backend/
 │   ├── app/
-│   │   ├── agents/           # AI Agents
-│   │   │   ├── architect.py  # System design
-│   │   │   ├── virtuoso.py   # Code generation
-│   │   │   ├── sentinel.py   # Security scanning
-│   │   │   ├── watcher.py    # Visual verification
-│   │   │   └── state.py      # Agent state management
+│   │   ├── agents/               # AI Agents
+│   │   │   ├── architect.py      # System design from prompts
+│   │   │   ├── virtuoso.py       # Code generation + targeted repair
+│   │   │   ├── sentinel.py       # Security scanning
+│   │   │   ├── testing_agent.py  # Test generation & execution
+│   │   │   ├── advisor.py        # Deployment advisory
+│   │   │   ├── watcher.py        # Code validation
+│   │   │   ├── browser_validator.py # Playwright visual testing
+│   │   │   ├── diagnostician.py  # Self-healing root-cause analysis
+│   │   │   └── state.py          # AgentState dataclass
 │   │   ├── core/
-│   │   │   ├── config.py     # Configuration
-│   │   │   ├── key_manager.py# API key rotation
-│   │   │   ├── local_model.py# Ollama integration
-│   │   │   └── socket_manager.py
+│   │   │   ├── orchestrator.py    # LangGraph state machine
+│   │   │   ├── HybridModelClient.py # Gemini + Ollama with retry
+│   │   │   ├── sandbox_guard.py  # Security policy enforcement
+│   │   │   ├── strategy_engine.py # Self-healing governance
+│   │   │   ├── checkpoint_manager.py # State persistence
+│   │   │   ├── artifact_generator.py # Report generation
+│   │   │   ├── key_manager.py    # API key rotation
+│   │   │   └── socket_manager.py # Real-time events
 │   │   └── api/
-│   │       └── endpoints.py  # REST API routes
-│   ├── orchestrator.py       # LangGraph workflow
-│   └── main.py               # FastAPI entry point
+│   │       └── endpoints.py      # REST + Socket.IO routes
+│   └── main.py                   # FastAPI entry point
 ├── frontend/
 │   ├── src/
-│   │   └── app/
-│   │       ├── page.tsx      # Landing page
-│   │       └── war-room/
-│   │           └── page.tsx  # Main dashboard
+│   │   ├── app/
+│   │   │   ├── page.tsx          # Landing page
+│   │   │   └── war-room/page.tsx # Main dashboard
+│   │   ├── components/
+│   │   │   └── war-room/         # Dashboard widgets
+│   │   └── lib/                  # Socket, events, utils
 │   └── package.json
+├── ARCHITECTURE.md               # Detailed architecture docs
 └── README.md
 ```
 
