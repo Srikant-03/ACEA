@@ -1,0 +1,11 @@
+{
+  "Gemfile": 772,
+  "config/routes.rb": 232,
+  "app/models/product.rb": 228,
+  "app/controllers/products_controller.rb": 98,
+  "app/views/products/index.html.erb": 978,
+  "app/views/layouts/application.html.erb": 2117,
+  "bin/rails": 79,
+  "bin/bundle": 82,
+  "bin/setup": 520
+}

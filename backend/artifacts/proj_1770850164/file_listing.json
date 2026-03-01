@@ -1,0 +1,17 @@
+{
+  "package.json": 562,
+  "frontend/next.config.js": 119,
+  "frontend/src/app/layout.tsx": 497,
+  "frontend/src/app/globals.css": 22,
+  "frontend/src/app/page.tsx": 1657,
+  "frontend/src/app/cart/page.tsx": 4636,
+  "frontend/src/app/api/products/route.ts": 160,
+  "frontend/src/app/api/cart/route.ts": 1297,
+  "frontend/src/components/ProductCard.tsx": 1835,
+  "frontend/src/lib/data.ts": 1614,
+  "frontend/tailwind.config.ts": 509,
+  "frontend/postcss.config.mjs": 69,
+  "frontend/tsconfig.json": 590,
+  "src/server.js": 1088,
+  "server.js": 37
+}

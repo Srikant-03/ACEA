@@ -1,0 +1,69 @@
+{
+  "version": "2.0",
+  "job_id": "proj_1771108900",
+  "status": "failed",
+  "objective": "make a simple e commerce website",
+  "execution_summary": {
+    "start_time": "2026-02-15T04:28:55.864454",
+    "end_time": "2026-02-15T04:28:55.864454",
+    "duration_seconds": 0,
+    "iterations": 3,
+    "steps_completed": 0,
+    "retry_count": 3,
+    "total_retries_used": 0,
+    "max_total_retries": 5,
+    "last_strategy": null
+  },
+  "plan": null,
+  "changes": {
+    "files_created": [
+      "frontend/package.json",
+      "frontend/server.js",
+      "frontend/models/Product.js",
+      "frontend/index.html",
+      "frontend/src/main.jsx",
+      "frontend/src/App.jsx",
+      "frontend/src/components/ProductList.jsx",
+      "frontend/src/api/productApi.js",
+      "frontend/vite.config.js",
+      "frontend/tailwind.config.js",
+      "frontend/postcss.config.js",
+      "frontend/src/index.css"
+    ],
+    "files_modified": [],
+    "files_deleted": [],
+    "total_lines_added": 326,
+    "total_lines_removed": 0
+  },
+  "verification": {
+    "tests": {
+      "total": 0,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0
+    },
+    "security": {
+      "status": "APPROVED",
+      "vulnerabilities": 0
+    },
+    "visual_qa": {
+      "status": "FAIL",
+      "overall_quality": "N/A"
+    }
+  },
+  "thought_signatures": [],
+  "strategy_history": [],
+  "git": null,
+  "diff_archive": null,
+  "metrics": {
+    "total_duration_seconds": 0,
+    "iterations_used": 3,
+    "retries_used": 0,
+    "files_generated": 12,
+    "thought_signatures_captured": 0,
+    "strategy_attempts": 0
+  },
+  "artifacts": {
+    "file_listing": "C:\\ACEA\\backend\\artifacts\\proj_1771108900\\file_listing.json"
+  }
+}

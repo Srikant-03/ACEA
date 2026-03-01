@@ -1,0 +1,21 @@
+{
+  "Gemfile": 556,
+  "config/routes.rb": 775,
+  "app/controllers/products_controller.rb": 642,
+  "app/controllers/carts_controller.rb": 1342,
+  "app/controllers/orders_controller.rb": 1327,
+  "app/models/product.rb": 299,
+  "app/models/cart.rb": 471,
+  "app/models/order.rb": 485,
+  "app/views/layouts/application.html.erb": 1613,
+  "app/views/products/index.html.erb": 1122,
+  "app/views/products/show.html.erb": 1041,
+  "app/views/carts/show.html.erb": 3263,
+  "app/views/orders/new.html.erb": 2065,
+  "db/migrate/20231027100000_create_products.rb": 333,
+  "db/migrate/20231027100001_create_carts_and_items.rb": 462,
+  "db/migrate/20231027100002_create_orders.rb": 697,
+  "app/assets/stylesheets/application.scss": 152,
+  "app/javascript/application.js": 253,
+  "app/javascript/controllers.js": 41
+}

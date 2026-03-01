@@ -1,0 +1,13 @@
+{
+  "frontend/package.json": 540,
+  "frontend/next.config.mjs": 117,
+  "frontend/app/layout.tsx": 1192,
+  "frontend/app/globals.css": 225,
+  "frontend/app/page.tsx": 5077,
+  "frontend/app/api/products/route.ts": 1449,
+  "frontend/app/api/cart/route.ts": 2402,
+  "frontend/tailwind.config.ts": 497,
+  "frontend/postcss.config.mjs": 155,
+  "frontend/next.config.js": 119,
+  "frontend/tsconfig.json": 573
+}

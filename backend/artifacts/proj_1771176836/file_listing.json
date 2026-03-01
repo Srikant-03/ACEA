@@ -1,0 +1,17 @@
+{
+  "bin/rails": 79,
+  "bin/bundle": 244,
+  "bin/setup": 739,
+  "Gemfile": 1187,
+  "config/application.rb": 1331,
+  "config/routes.rb": 486,
+  "config/database.yml": 666,
+  "app/controllers/application_controller.rb": 56,
+  "app/controllers/products_controller.rb": 306,
+  "app/models/product.rb": 416,
+  "db/migrate/20231027153012_create_products.rb": 353,
+  "app/views/layouts/application.html.erb": 851,
+  "app/views/products/index.html.erb": 807,
+  "app/views/products/show.html.erb": 560,
+  "app/assets/stylesheets/application.scss": 4871
+}

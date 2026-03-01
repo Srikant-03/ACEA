@@ -1,0 +1,11 @@
+{
+  "frontend/server.js": 4821,
+  "frontend/package.json": 497,
+  "frontend/public/css/style.css": 5733,
+  "frontend/public/js/app.js": 6204,
+  "frontend/views/layout.ejs": 1207,
+  "frontend/views/index.ejs": 804,
+  "frontend/views/cart.ejs": 1855,
+  "package.json": 497,
+  "startup_script_or_command": 13
+}

@@ -1,0 +1,14 @@
+{
+  "frontend/package.json": 1041,
+  "frontend/server.js": 2093,
+  "frontend/models/Product.js": 517,
+  "frontend/index.html": 363,
+  "frontend/src/main.jsx": 261,
+  "frontend/src/App.jsx": 692,
+  "frontend/src/components/ProductList.jsx": 2261,
+  "frontend/src/api/productApi.js": 815,
+  "frontend/vite.config.js": 589,
+  "frontend/tailwind.config.js": 181,
+  "frontend/postcss.config.js": 90,
+  "frontend/src/index.css": 58
+}

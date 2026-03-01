@@ -1,0 +1,17 @@
+{
+  "Gemfile": 2110,
+  "Rakefile": 243,
+  "config/routes.rb": 798,
+  "config/database.yml": 1079,
+  "bin/rails": 141,
+  "bin/bundle": 647,
+  "bin/setup": 592,
+  "app/assets/stylesheets/application.scss": 2854,
+  "app/views/layouts/application.html.erb": 822,
+  "app/models/product.rb": 312,
+  "app/models/cart.rb": 2127,
+  "app/controllers/products_controller.rb": 312,
+  "app/controllers/carts_controller.rb": 1699,
+  "app/views/products/index.html.erb": 1028,
+  "app/views/products/show.html.erb": 1277
+}

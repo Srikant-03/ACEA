@@ -1,0 +1,10 @@
+{
+  "Gemfile": 879,
+  "config/routes.rb": 813,
+  "app/models/product.rb": 245,
+  "db/migrate/20231027120000_create_products.rb": 314,
+  "app/controllers/products_controller.rb": 1949,
+  "app/views/products/index.html.erb": 1128,
+  "app/views/products/show.html.erb": 1003,
+  "app/views/layouts/application.html.erb": 1573
+}

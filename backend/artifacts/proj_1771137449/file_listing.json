@@ -1,0 +1,17 @@
+{
+  "package.json": 542,
+  "server.js": 8201,
+  "models/Product.js": 592,
+  "models/User.js": 1178,
+  "views/index.ejs": 2033,
+  "views/auth.ejs": 2522,
+  "views/product-detail.ejs": 1631,
+  "views/cart.ejs": 2044,
+  "views/dashboard.ejs": 827,
+  "views/error.ejs": 650,
+  "views/partials/header.ejs": 937,
+  "views/partials/footer.ejs": 169,
+  "public/css/style.css": 10595,
+  "tsconfig.json": 2,
+  "src/app.js": 195
+}

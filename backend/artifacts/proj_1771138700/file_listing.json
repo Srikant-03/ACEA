@@ -1,0 +1,15 @@
+{
+  "frontend/package.json": 407,
+  "frontend/server.js": 904,
+  "frontend/routes/index.js": 767,
+  "frontend/controllers/productController.js": 1874,
+  "frontend/views/index.ejs": 921,
+  "frontend/views/product.ejs": 1240,
+  "frontend/public/css/style.css": 4067,
+  "frontend/public/js/main.js": 1985,
+  "frontend/views/partials/header.ejs": 324,
+  "frontend/views/partials/footer.ejs": 149,
+  "frontend/views/404.ejs": 526,
+  "frontend/views/cart.ejs": 1624,
+  "frontend/views/checkout.ejs": 1521
+}
