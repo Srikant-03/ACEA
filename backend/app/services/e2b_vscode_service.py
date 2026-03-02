@@ -549,9 +549,9 @@ Open the terminal with **Ctrl+`** (backtick) and run:
 
                  # Configure gem paths to be user-writable (avoid permission errors on bundle install)
                  sandbox.commands.run(
-                     'echo "export GEM_HOME=\$HOME/.gems" >> ~/.bashrc && '
-                     'echo "export BUNDLE_PATH=\$HOME/.gems" >> ~/.bashrc && '
-                     'echo "export PATH=\$HOME/.gems/bin:\$PATH" >> ~/.bashrc',
+                     r'echo "export GEM_HOME=\$HOME/.gems" >> ~/.bashrc && '
+                     r'echo "export BUNDLE_PATH=\$HOME/.gems" >> ~/.bashrc && '
+                     r'echo "export PATH=\$HOME/.gems/bin:\$PATH" >> ~/.bashrc',
                      timeout=10
                  )
                  log("✅ Configured gem paths to user-writable directory")
