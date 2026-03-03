@@ -295,36 +295,50 @@ class E2BVSCodeService:
         """Sanitize Gemfile content to be Linux-compatible and fix common LLM gem errors."""
         import re
         # Remove platforms block: platforms :mingw, ... do ... end
-        # Using DOTALL to match across lines
         content = re.sub(r'platforms\s+:[a-zA-Z0-9_,\s]+mingw[a-zA-Z0-9_,\s]*do.*?end', '', content, flags=re.DOTALL)
         
         # Fix common LLM gem name errors
-        # hotwire-rails was split into turbo-rails + stimulus-rails
         gem_replacements = {
             'hotwire-rails': ('turbo-rails', 'stimulus-rails'),
         }
         
+        # Collect all existing gem names for dedup
+        gem_name_pattern = re.compile(r"""gem\s+['"]([^'"]+)['"]""")
+        existing_gems = set()
+        for line in content.split('\n'):
+            m = gem_name_pattern.search(line)
+            if m:
+                existing_gems.add(m.group(1))
+        
         lines = content.split('\n')
         cleaned_lines = []
+        seen_gems = set()
+        
         for line in lines:
-            # Remove Windows-only gems
             if "gem" in line and ("wdm" in line or "tzinfo-data" in line):
                 continue
             if "platforms" in line and "mingw" in line:
                 continue
             
-            # Check for bad gem names and replace
             replaced = False
             for bad_gem, replacements in gem_replacements.items():
                 if bad_gem in line and "gem" in line:
-                    # Replace with correct gem(s)
                     for replacement in replacements:
-                        cleaned_lines.append(f"gem '{replacement}'")
+                        if replacement not in existing_gems and replacement not in seen_gems:
+                            cleaned_lines.append(f"gem '{replacement}'")
+                            seen_gems.add(replacement)
                     replaced = True
                     logger.info(f"Gemfile sanitizer: replaced '{bad_gem}' with {replacements}")
                     break
             
             if not replaced:
+                m = gem_name_pattern.search(line)
+                if m:
+                    gem_name = m.group(1)
+                    if gem_name in seen_gems:
+                        logger.info(f"Gemfile sanitizer: removed duplicate gem '{gem_name}'")
+                        continue
+                    seen_gems.add(gem_name)
                 cleaned_lines.append(line)
             
         return '\n'.join(cleaned_lines)
