@@ -422,8 +422,11 @@ _register(StackProfile(
     display_name="Static HTML/CSS/JS",
     category="static",
     is_web=True,
-    detect_keywords=["static html", "static site", "html css", "landing page", "no framework",
-                     "plain html", "vanilla html", "simple page", "basic website", "simple website", "html only", "css only"],
+    detect_keywords=["static html", "static site", "html css", "html css js", "html css javascript",
+                     "using html", "landing page", "no framework", "without framework",
+                     "plain html", "vanilla html", "vanilla javascript", "vanilla js",
+                     "simple page", "basic website", "simple website", "html only", "css only",
+                     "pure html", "pure css", "pure javascript", "just html"],
     dependency_manifest="",  # No manifest needed
     source_prefix="frontend/",
     primary_stack="static",
@@ -756,6 +759,10 @@ def detect_stack(user_prompt: str, tech_stack: str = "Auto-detect") -> StackProf
     4. Default profile
     """
     prompt_lower = user_prompt.lower()
+    # Normalize: strip commas and common punctuation so "html, css" matches keyword "html css"
+    import re as _re
+    prompt_normalized = _re.sub(r'[,;:!?()\[\]{}]', ' ', prompt_lower)
+    prompt_normalized = ' '.join(prompt_normalized.split())  # collapse whitespace
     
     if isinstance(tech_stack, list):
         tech_stack = " ".join(tech_stack)
@@ -781,7 +788,7 @@ def detect_stack(user_prompt: str, tech_stack: str = "Auto-detect") -> StackProf
     )
     for profile in all_profiles_sorted:
         for keyword in profile.detect_keywords:
-            if keyword in prompt_lower:
+            if keyword in prompt_normalized:
                 logger.info(f"Stack detected (prompt keyword '{keyword}'): {profile.id}")
                 return profile
     
