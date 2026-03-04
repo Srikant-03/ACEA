@@ -423,7 +423,7 @@ _register(StackProfile(
     category="static",
     is_web=True,
     detect_keywords=["static html", "static site", "html css", "html css js", "html css javascript",
-                     "using html", "landing page", "no framework", "without framework",
+                     "landing page", "no framework", "without framework",
                      "plain html", "vanilla html", "vanilla javascript", "vanilla js",
                      "simple page", "basic website", "simple website", "html only", "css only",
                      "pure html", "pure css", "pure javascript", "just html"],
@@ -788,7 +788,13 @@ def detect_stack(user_prompt: str, tech_stack: str = "Auto-detect") -> StackProf
     )
     for profile in all_profiles_sorted:
         for keyword in profile.detect_keywords:
-            if keyword in prompt_normalized:
+            # For short keywords (<=4 chars), use word boundary matching
+            # to prevent false positives like 'ng' matching inside 'using'
+            if len(keyword) <= 4:
+                if _re.search(r'\b' + _re.escape(keyword) + r'\b', prompt_normalized):
+                    logger.info(f"Stack detected (prompt keyword '{keyword}'): {profile.id}")
+                    return profile
+            elif keyword in prompt_normalized:
                 logger.info(f"Stack detected (prompt keyword '{keyword}'): {profile.id}")
                 return profile
     
