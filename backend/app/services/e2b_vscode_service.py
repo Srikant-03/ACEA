@@ -235,6 +235,14 @@ class E2BVSCodeService:
                 "port": 3000,
                 "project_type": "express"
             })
+        # Static HTML (index.html exists but no package.json or other manifests)
+        elif any(f.endswith("index.html") or f == "index.html" for f in files.keys()) and not has_package_json:
+            config.update({
+                "install_cmd": "",
+                "run_cmd": "python3 -m http.server 3000",
+                "port": 3000,
+                "project_type": "static"
+            })
         # Generic Node.js (Fallback for package.json without known framework)
         elif has_package_json:
             config.update({

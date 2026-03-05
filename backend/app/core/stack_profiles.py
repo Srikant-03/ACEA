@@ -428,16 +428,24 @@ _register(StackProfile(
                      "simple page", "basic website", "simple website", "html only", "css only",
                      "pure html", "pure css", "pure javascript", "just html"],
     dependency_manifest="",  # No manifest needed
-    source_prefix="frontend/",
+    source_prefix="",  # Static sites don't use frontend/ subdirs
     primary_stack="static",
     default_project_type="static",
     config_files={},
-    architect_rules=["No build tools needed. Direct HTML/CSS/JS files."],
+    architect_rules=[
+        "No build tools needed. Direct HTML/CSS/JS files only.",
+        "DO NOT use Tailwind CSS, Browsersync, or any npm-based tools.",
+        "The project should contain ONLY: index.html, style.css (or styles/), and script.js (or scripts/).",
+        "DO NOT create a frontend/ subdirectory. All files go in the project root.",
+    ],
     virtuoso_rules=[
         "Generate clean, semantic HTML5.",
-        "Use vanilla CSS (no preprocessors unless requested).",
-        "Use vanilla JavaScript (no npm packages).",
-        "DO NOT generate package.json for static sites unless a build tool is needed.",
+        "Use vanilla CSS (no preprocessors, no Tailwind CSS, no PostCSS).",
+        "Use vanilla JavaScript (no TypeScript, no npm packages, no bundlers).",
+        "CRITICAL: DO NOT generate package.json. This is a zero-dependency static site.",
+        "CRITICAL: DO NOT add Browsersync, Tailwind, Webpack, Vite, or any build tools.",
+        "All files (index.html, style.css, script.js) go in the project root, NOT in frontend/.",
+        "Use <link> and <script> tags to include CSS and JS files directly.",
     ],
     validation_rules=[],
 ))

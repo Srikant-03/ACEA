@@ -777,6 +777,13 @@ Respond in JSON format:
              port = 8080
              runner.frontend_port = port
         
+        # Static HTML (index.html but no package.json or other manifests)
+        elif (any(f.endswith("index.html") or f == "index.html" for f in files) and
+              not any(f.endswith("package.json") for f in files)):
+             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected STATIC HTML project."})
+             install_cmd = ""
+             run_cmd = f"python -m http.server {port}"
+        
         elif any(f.endswith("server.js") or f.endswith("index.js") or f.endswith("app.js") for f in files):
              # Express.js / vanilla Node.js server
              await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected NODE/EXPRESS project."})
