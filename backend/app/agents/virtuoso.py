@@ -102,6 +102,14 @@ class VirtuosoAgent:
         # Normalize all file paths (forward-slash, dedup)
         files = self._normalize_file_paths(files)
         
+        # POST-GENERATION SANITIZER: Remove files forbidden by the stack profile
+        from app.core.stack_profiles import detect_stack
+        detected_stack = blueprint.get('tech_stack', 'Auto-detect')
+        profile = detect_stack(blueprint.get('project_name', ''), detected_stack)
+        files, removed = self._sanitize_for_profile(files, profile)
+        if removed:
+            await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"🧹 Sanitizer removed {len(removed)} forbidden files: {removed}"})
+        
         # Emit file generation events for UI
         for path, code in files.items():
             await sm.emit("file_generated", {"path": path, "content": code, "status": "created"})
@@ -1207,6 +1215,37 @@ Return JSON with fixed config files:
                 truncated = " (truncated)" if len(files[path]) > 1500 else ""
                 formatted.append(f"\n--- {path}{truncated} ---\n{content}\n")
         return "".join(formatted) if formatted else "No matching files found."
+
+    def _sanitize_for_profile(self, files: dict, profile) -> tuple:
+        """
+        Remove files that are forbidden by the stack profile.
+        For static-html: strips package.json, tailwind configs, postcss configs, etc.
+        Returns (cleaned_files, list_of_removed_filenames).
+        """
+        if profile.id != "static-html":
+            return files, []
+        
+        # Files that should NEVER exist in a static HTML project
+        forbidden_patterns = [
+            "package.json", "package-lock.json", "node_modules",
+            "tailwind.config", "postcss.config", "tsconfig.json",
+            "webpack.config", "vite.config", "rollup.config",
+            ".babelrc", "babel.config", "next.config",
+            "angular.json", "nuxt.config",
+        ]
+        
+        cleaned = {}
+        removed = []
+        
+        for path, content in files.items():
+            basename = path.split("/")[-1].split("\\")[-1]
+            if any(basename.startswith(fp) or basename == fp for fp in forbidden_patterns):
+                removed.append(basename)
+                logger.info(f"Sanitizer: Removed forbidden file '{path}' from static-html project")
+            else:
+                cleaned[path] = content
+        
+        return cleaned, removed
 
     def _normalize_file_paths(self, files: dict) -> dict:
         """

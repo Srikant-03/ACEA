@@ -775,16 +775,23 @@ def detect_stack(user_prompt: str, tech_stack: str = "Auto-detect") -> StackProf
     if isinstance(tech_stack, list):
         tech_stack = " ".join(tech_stack)
     tech_lower = tech_stack.lower() if tech_stack else ""
+    # Normalize tech_stack too: strip commas so "HTML, CSS, JavaScript" matches "html css"
+    tech_normalized = _re.sub(r'[,;:!?()\[\]{}]', ' ', tech_lower)
+    tech_normalized = ' '.join(tech_normalized.split())
     
     # 1. Exact match on tech_stack
     if tech_lower in STACK_PROFILES:
         logger.info(f"Stack detected (exact): {tech_lower}")
         return STACK_PROFILES[tech_lower]
     
-    # 2. Keyword match on tech_stack
+    # 2. Keyword match on tech_stack (normalized)
     for profile in STACK_PROFILES.values():
         for keyword in profile.detect_keywords:
-            if keyword in tech_lower:
+            if len(keyword) <= 4:
+                if _re.search(r'\b' + _re.escape(keyword) + r'\b', tech_normalized):
+                    logger.info(f"Stack detected (tech_stack keyword '{keyword}'): {profile.id}")
+                    return profile
+            elif keyword in tech_normalized:
                 logger.info(f"Stack detected (tech_stack keyword '{keyword}'): {profile.id}")
                 return profile
     
