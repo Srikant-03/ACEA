@@ -747,13 +747,14 @@ def _validate_file_structure(files: dict, tech_stack: str = "auto") -> list:
     postcss_files = [p for p in file_paths if "postcss.config" in p]
     json_files = [p for p in file_paths if p.endswith(".json")]
     
-    # 1. Check for dependency manifest existence
+    # 1. Check for dependency manifest existence (skip for static-html)
     manifest = profile.dependency_manifest if profile else "package.json"
     has_source_files = any(
         p.endswith((".tsx", ".jsx", ".ts", ".vue", ".svelte", ".py", ".go", ".java"))
         for p in file_paths
     )
-    if has_source_files and not any(p.endswith(manifest) for p in file_paths):
+    is_static_html = profile and profile.id == "static-html"
+    if has_source_files and not is_static_html and not any(p.endswith(manifest) for p in file_paths):
         warnings.append(f"STRUCTURE: Source files found but no {manifest} generated")
     
     # 2. Validate JSON files are parseable

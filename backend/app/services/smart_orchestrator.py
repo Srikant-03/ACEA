@@ -72,16 +72,38 @@ class SmartOrchestrator:
     async def _combined_architect_coder(self, prompt: str, tech_stack: Optional[str]) -> Dict:
         """
         Single API call that generates both blueprint AND all code files.
+        Stack-aware: injects profile-specific rules to prevent wrong file generation.
         """
         from app.core.local_model import HybridModelClient
+        from app.core.stack_profiles import detect_stack
         
         client = HybridModelClient()
+        
+        # Detect stack profile for rule injection
+        profile = detect_stack(prompt, tech_stack or "auto")
+        stack_rules = profile.get_virtuoso_rules_text()
+        
+        # Build stack-specific instructions
+        stack_instructions = ""
+        if profile.id == "static-html":
+            stack_instructions = """
+CRITICAL STATIC HTML RULES:
+- DO NOT generate package.json, tailwind.config, postcss.config, or any build tool configs
+- Use ONLY vanilla HTML, CSS, and JavaScript (no npm, no Node.js, no build tools)
+- Use <link> and <script> tags to include CSS and JS files directly
+- All files go in the project root, NOT in frontend/ or src/
+"""
         
         combined_prompt = f"""
 You are an expert full-stack developer. Complete this task in ONE response.
 
 USER REQUEST: {prompt}
 TECH STACK: {tech_stack or 'Choose the best fit for the project'}
+DETECTED PROFILE: {profile.display_name}
+
+{stack_instructions}
+
+{f"STACK RULES:" + chr(10) + stack_rules if stack_rules else ""}
 
 OUTPUT FORMAT - Return ONLY valid JSON:
 {{
@@ -89,14 +111,14 @@ OUTPUT FORMAT - Return ONLY valid JSON:
     "project_name": "my-project",
     "description": "Brief description",
     "projectType": "frontend|backend|fullstack",
-    "tech_stack": "React + Node.js",
-    "entrypoint": "npm start",
+    "tech_stack": "{profile.display_name}",
+    "entrypoint": "start command",
     "port": 3000
   }},
   "files": {{
-    "src/App.jsx": "import React from \'react\';\\n\\nfunction App() {{\\n  return <div>Hello</div>;\\n}}\\n\\nexport default App;",
-    "package.json": "{{\\\"name\\\": \\\"my-app\\\", \\\"version\\\": \\\"1.0.0\\\"}}",
-    "index.html": "<!DOCTYPE html>..."
+    "index.html": "<!DOCTYPE html>...",
+    "style.css": "/* styles */",
+    "script.js": "// logic"
   }}
 }}
 
@@ -118,6 +140,16 @@ REQUIREMENTS:
                 for f in result["files"]:
                     files_dict[f["path"]] = f.get("content", "")
                 result["files"] = files_dict
+            
+            # Sanitize: strip forbidden files for static-html
+            if profile.id == "static-html" and "files" in result:
+                forbidden = ["package.json", "package-lock.json", "tailwind.config",
+                           "postcss.config", "tsconfig.json", "webpack.config",
+                           "vite.config", ".babelrc", "babel.config"]
+                result["files"] = {
+                    k: v for k, v in result["files"].items()
+                    if not any(k.split("/")[-1].startswith(fp) for fp in forbidden)
+                }
             
             return result
         except Exception as e:

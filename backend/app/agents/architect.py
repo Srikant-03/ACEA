@@ -36,16 +36,17 @@ class ArchitectAgent:
         # Initialize Redis (optional, non-blocking)
         await cache.init_redis()
 
-        # Check Cache
-        cached_response = await cache.get(user_prompt, "architect", tech_stack=tech_stack)
+        # ── Detect stack profile (BEFORE cache check so profile_id is part of the key) ──
+        profile = detect_stack(user_prompt, tech_stack)
+
+        # Check Cache (include profile.id so different stacks don't share blueprints)
+        cache_tag = f"{tech_stack}::{profile.id}"
+        cached_response = await cache.get(user_prompt, "architect", tech_stack=cache_tag)
         if cached_response:
-            await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": "⚡ Retrieved blueprint from cache"})
+            await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"⚡ Retrieved blueprint from cache (profile={profile.id})"})
             return json.loads(cached_response)
 
-        await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"Analyzing requirements (Stack: {tech_stack})..."})
-
-        # ── Detect stack profile ──────────────────────────────
-        profile = detect_stack(user_prompt, tech_stack)
+        await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"Analyzing requirements (Stack: {tech_stack}, Profile: {profile.id})..."})
         logger.info(f"Architect using stack profile: {profile.id} ({profile.display_name})")
 
         # ── Build dynamic rules from profile ──────────────────
@@ -184,8 +185,25 @@ THOUGHT_SIGNATURE:
                     result["file_structure"] = files
                     await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"🔧 Architect added missing configs: {len(added_configs)} files"})
 
-                # Cache successful result
-                await cache.set(user_prompt, "architect", json.dumps(result), tech_stack=tech_stack)
+                # ── STATIC-HTML SANITIZER: Strip forbidden files from blueprint ──
+                if output_profile.id == "static-html":
+                    forbidden_prefixes = [
+                        "package.json", "package-lock.json",
+                        "tailwind.config", "postcss.config", "tsconfig.json",
+                        "webpack.config", "vite.config", "rollup.config",
+                        ".babelrc", "babel.config", "next.config",
+                    ]
+                    original_count = len(result.get("file_structure", []))
+                    result["file_structure"] = [
+                        f for f in result.get("file_structure", [])
+                        if not any(f["path"].split("/")[-1].startswith(fp) for fp in forbidden_prefixes)
+                    ]
+                    removed_count = original_count - len(result["file_structure"])
+                    if removed_count > 0:
+                        await sm.emit("agent_log", {"agent_name": "ARCHITECT", "message": f"🧹 Removed {removed_count} forbidden files from static-html blueprint"})
+
+                # Cache successful result (include profile.id in key)
+                await cache.set(user_prompt, "architect", json.dumps(result), tech_stack=cache_tag)
 
                 # --- Capture Thought Signature ---
                 from app.core.thought_signature import capture_signature
