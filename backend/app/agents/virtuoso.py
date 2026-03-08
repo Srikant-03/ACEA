@@ -99,6 +99,9 @@ class VirtuosoAgent:
              files = result
              signature = None
         
+        if blueprint.get("user_request"):
+             files["prompt.txt"] = blueprint["user_request"]
+
         # Normalize all file paths (forward-slash, dedup)
         files = self._normalize_file_paths(files)
         
@@ -197,6 +200,7 @@ RULES:
         
         max_attempts = 3
         last_response = None
+        last_error = "No attempts made"
         
         for attempt in range(max_attempts):
             try:
@@ -259,7 +263,7 @@ Please return the SAME content but as VALID JSON. Rules:
                                 try:
                                     json.loads(fixed_content, strict=False)
                                     files_dict[path] = fixed_content
-                                except:
+                                except Exception:
                                     files_dict[path] = "{}"
                     
                     await sm.emit("agent_log", {"agent_name": "VIRTUOSO", "message": f"✅ Generated {len(files_dict)} files in batch"})
@@ -331,7 +335,7 @@ Please return the SAME content but as VALID JSON. Rules:
                 content = m.group(2)
                 try:
                     content = content.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\")
-                except:
+                except Exception:
                     pass
                 files[filepath] = content
             
@@ -1011,7 +1015,7 @@ Return JSON:
                         try:
                             json.loads(fixed_content, strict=False)
                             rewritten[path] = fixed_content
-                        except:
+                        except Exception:
                             rewritten[path] = "{}"
             
             result = current_files.copy()
@@ -1096,7 +1100,7 @@ Return JSON:
                         try:
                             json.loads(fixed_content, strict=False)
                             fixes[path] = fixed_content
-                        except:
+                        except Exception:
                             fixes[path] = "{}"
             
             result = current_files.copy()
@@ -1186,7 +1190,7 @@ Return JSON with fixed config files:
                         try:
                             json.loads(fixed_content, strict=False)
                             fixes[path] = fixed_content
-                        except:
+                        except Exception:
                             fixes[path] = "{}"
             
             result = current_files.copy()

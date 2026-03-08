@@ -279,7 +279,7 @@ class E2BDesktopService:
             if parent:
                 try:
                     sandbox.filesystem.make_dir(parent)
-                except:
+                except Exception:
                     pass  # Directory might already exist
             
             # Write file
@@ -701,7 +701,7 @@ class E2BDesktopService:
             parent = "/".join(full_path.split("/")[:-1])
             try:
                 session.sandbox.filesystem.make_dir(parent)
-            except:
+            except Exception:
                 pass
             
             session.sandbox.filesystem.write(full_path, content)

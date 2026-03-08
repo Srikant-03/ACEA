@@ -178,7 +178,7 @@ class TestingAgent:
                         return "jest"
                     elif "mocha" in deps:
                         return "mocha"
-            except:
+            except (json.JSONDecodeError, KeyError, OSError):
                 pass
         
         # Check for Python files

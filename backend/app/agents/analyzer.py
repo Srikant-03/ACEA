@@ -267,7 +267,7 @@ Return JSON:
                         tech_stack["frameworks"].append("Vue")
                     if 'tailwindcss' in deps:
                         tech_stack["frameworks"].append("Tailwind CSS")
-            except:
+            except Exception:
                 pass
         
         # Check requirements.txt
@@ -282,7 +282,7 @@ Return JSON:
                         tech_stack["frameworks"].append("Flask")
                     if 'django' in reqs:
                         tech_stack["frameworks"].append("Django")
-            except:
+            except Exception:
                 pass
                 
         tech_stack["frameworks"] = list(set(tech_stack["frameworks"]))

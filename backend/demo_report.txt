@@ -1,0 +1,29 @@
+=== BROWSER VALIDATION REPORT ===
+URL: http://localhost:8081/demo/low_contrast.html
+Timestamp: 2026-02-16T23:42:27.526098
+Overall Score: N/A/100
+Status: ERROR
+
+--- SCORES ---
+
+--- ISSUES ---
+
+[INTERACTIVE] Status: PASS
+ - No issues found.
+
+[ACCESSIBILITY] Status: WARN
+ - Low contrast (1.61:1) for text "This text has bad co"
+ - Low contrast (1.00:1) for text "This text is invisib"
+ - Low contrast (1.16:1) for text "Bad Button"
+
+[RESPONSIVE] Status: PASS
+ - No issues found.
+
+[VISUAL_OVERLAP] Status: PASS
+ - No issues found.
+
+[PERFORMANCE] Status: PASS
+ - No issues found.
+
+[SEO] Status: PASS
+ - Meta description missing

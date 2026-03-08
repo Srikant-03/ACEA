@@ -256,7 +256,7 @@ class GitAdapter:
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         total_lines += len(f.readlines())
-                except:
+                except (UnicodeDecodeError, OSError):
                     pass  # Skip binary files
         
         # Detect primary languages

@@ -217,6 +217,7 @@ THOUGHT_SIGNATURE:
                 )
 
                 result["thought_signature"] = signature.to_dict()
+                result["user_request"] = user_prompt  # Inject original prompt for downstream agents
 
                 return result
 

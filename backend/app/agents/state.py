@@ -223,6 +223,7 @@ class AgentState:
     repo_path: Optional[str] = None  # Path to cloned repository
     repo_url: Optional[str] = None   # Original repository URL
     current_branch: Optional[str] = None  # Branch created for work
+    feature_branch: Optional[str] = None  # Feature branch name for autonomous execution
     commit_history: List[str] = field(default_factory=list)  # List of commit SHAs
     initial_commit: Optional[str] = None  # Starting commit for rollback
     

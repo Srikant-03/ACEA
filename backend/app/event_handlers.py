@@ -314,3 +314,103 @@ async def resume_mission(sid, data):
         import traceback
         traceback.print_exc()
         await sio.emit('mission_error', {'detail': str(e)}, room=sid)
+
+
+@sio.event
+async def run_preview_browser_test(sid, data):
+    """
+    Triggered from the Preview panel "Browser Test" button.
+    Data: {'project_id': '...', 'validation_level': 'standard'}
+    """
+    project_id = data.get('project_id')
+    level = data.get('validation_level', 'standard')
+
+    if not project_id:
+        await sio.emit('preview_test_complete', {
+            'overall_status': 'ERROR',
+            'error': 'project_id is required',
+        }, room=sid)
+        return
+
+    try:
+        from app.services.preview_browser_test_service import get_preview_browser_test_service
+        service = get_preview_browser_test_service()
+        result = await service.run_test(project_id, level, sid=sid)
+        await sio.emit('preview_test_complete', result, room=sid)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        await sio.emit('preview_test_complete', {
+            'overall_status': 'ERROR',
+            'error': str(e),
+        }, room=sid)
+
+
+@sio.event
+async def send_to_fix(sid, data):
+    """
+    Feed browser-test errors back into the self-healing loop.
+    Data: {'project_id': '...', 'errors': [...]}
+    """
+    project_id = data.get('project_id')
+    errors = data.get('errors', [])
+
+    if not project_id or not errors:
+        await sio.emit('agent_log', {
+            'agent_name': 'SYSTEM',
+            'message': '⚠️ send_to_fix requires project_id and errors'
+        }, room=sid)
+        return
+
+    await sio.emit('agent_log', {
+        'agent_name': 'SYSTEM',
+        'message': f'🔄 Feeding {len(errors)} browser errors into self-healing pipeline…'
+    }, room=sid)
+
+    try:
+        from app.core.orchestrator import graph, load_state
+
+        # Load latest state for this project
+        state = await load_state(project_id)
+        if not state:
+            # Build minimal state
+            state = {
+                "messages": [],
+                "project_id": project_id,
+                "agent_id": project_id,
+                "run_id": sid,
+                "user_prompt": "Fix browser errors",
+                "tech_stack": "Auto-detect",
+                "iteration_count": 0,
+                "max_iterations": 3,
+                "current_status": "fixing",
+                "file_system": {},
+                "errors": errors[:10],
+                "retry_count": 0,
+            }
+        else:
+            # Inject new errors and prompt into existing state
+            fix_prompt = (
+                f"Browser validation failed with {len(errors)} errors.\n"
+                f"Please fix the following issues:\n"
+                + "\n".join([f"- {e.get('message', str(e))}" for e in errors[:10]])
+            )
+            
+            if isinstance(state, dict):
+                state["errors"] = errors[:10]
+                state["current_status"] = "fixing"
+                state["messages"].append(fix_prompt)
+                state["user_prompt"] = fix_prompt
+            else:
+                state.errors = errors[:10]
+                state.current_status = "fixing"
+                state.messages.append(fix_prompt)
+                state.user_prompt = fix_prompt
+
+        config = {"configurable": {"thread_id": project_id}}
+        await _stream_graph_events(sid, graph, state, config, project_id)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        await sio.emit('mission_error', {'detail': str(e)}, room=sid)

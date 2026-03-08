@@ -451,12 +451,16 @@ class ProjectRunner:
             dev_script = re.sub(r'-p\s+\d+', f'-p {port}', dev_script)
             dev_script = re.sub(r'--port\s+\d+', f'--port {port}', dev_script)
             
+            # Ensure Vite exposes network
+            if "vite" in dev_script and "--host" not in dev_script:
+                dev_script += " --host"
+
             if dev_script != original:
                 scripts["dev"] = dev_script
                 pkg["scripts"] = scripts
                 with open(pkg_path, "w", encoding="utf-8") as f:
                     json.dump(pkg, f, indent=2)
-                self._log(f"Patched package.json dev script port → {port}")
+                self._log(f"Patched package.json dev script port → {port} (and --host)")
         except Exception as e:
             self._log(f"Warning: Could not patch package.json port: {e}")
 
@@ -485,8 +489,8 @@ class ProjectRunner:
             run_cmd = f"{run_cmd} --port {port}"
             self._log(f"Injected port {port} for npx command")
         elif run_cmd.startswith("vite") or "vite" in run_cmd:
-            run_cmd = f"{run_cmd} --port {port}"
-            self._log(f"Injected port {port} for Vite")
+            run_cmd = f"{run_cmd} --port {port} --host"
+            self._log(f"Injected port {port} for Vite (with --host)")
         elif run_cmd.startswith("next"):
             run_cmd = f"{run_cmd} -p {port}"
             self._log(f"Injected port {port} for Next.js")
@@ -496,8 +500,12 @@ class ProjectRunner:
             self._log(f"Node.js server — will use PORT={port} env var")
         elif run_cmd.startswith("python") and "http.server" in run_cmd:
             # Python http.server accepts port as positional argument: python -m http.server 3000
-            run_cmd = f"{run_cmd} {port}"
-            self._log(f"Injected port {port} for Python HTTP server")
+            # Check if a port number is already present after "http.server" to avoid duplication
+            if not _re.search(r'http\.server\s+\d+', run_cmd):
+                run_cmd = f"{run_cmd} {port}"
+                self._log(f"Injected port {port} for Python HTTP server")
+            else:
+                self._log(f"Port already present in http.server command, skipping injection")
         elif run_cmd == "npm start":
             # npm start might run a custom script — PORT env var is our best bet
             self._log(f"npm start — will use PORT={port} env var")

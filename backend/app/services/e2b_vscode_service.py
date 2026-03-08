@@ -101,11 +101,20 @@ class E2BVSCodeService:
         is_vue = any("vue" in f.lower() for f in files.keys()) or "vue" in tech_stack
         
         # Default config (Dynamic Fallback)
+        execution_dir = "/home/user/project"
+        
+        # Detect if project is nested in 'frontend/'
+        if "frontend/package.json" in files and "package.json" not in files:
+            execution_dir = "/home/user/project/frontend"
+        elif "frontend/index.html" in files and "index.html" not in files:
+             execution_dir = "/home/user/project/frontend"
+
         config = {
             "install_cmd": "npm install" if has_package_json else "",
             "run_cmd": best_run_cmd(pkg_scripts) if has_package_json else "echo 'No run command found'",
             "port": 3000,
-            "work_dir": "/home/user/project",
+            "work_dir": "/home/user/project", # Upload root
+            "execution_dir": execution_dir,     # Command root
             "project_type": "nodejs" if has_package_json else "unknown",
             "env_vars": {}
         }
@@ -113,7 +122,7 @@ class E2BVSCodeService:
         # Next.js with turbo
         if is_nextjs:
             config.update({
-                "install_cmd": "npm install",
+                "install_cmd": "npm install" if has_package_json else "",
                 "run_cmd": "npm run dev -- --turbo -p 3000",
                 "port": 3000,
                 "project_type": "nextjs",
@@ -122,7 +131,7 @@ class E2BVSCodeService:
         # Vite (React/Vue with Vite)
         elif is_vite:
             config.update({
-                "install_cmd": "npm install",
+                "install_cmd": "npm install" if has_package_json else "",
                 "run_cmd": "npm run dev -- --host 0.0.0.0 --port 3000",
                 "port": 3000,
                 "project_type": "vite",
@@ -622,16 +631,18 @@ Open the terminal with **Ctrl+`** (backtick) and run:
             
             # === Install dependencies ===
             install_success = True  # Track install result to gate server start
+            execution_dir = config.get("execution_dir", work_dir)
+
             if config["install_cmd"]:
                 install_cmd = config["install_cmd"]
                 # Use --legacy-peer-deps for robustness
                 if install_cmd == "npm install":
                     install_cmd = "npm install --legacy-peer-deps"
-                log(f"📦 Installing dependencies: {install_cmd}")
+                log(f"📦 Installing dependencies: {install_cmd} in {execution_dir}")
                 try:
                     result = sandbox.commands.run(
                         install_cmd,
-                        cwd=work_dir,
+                        cwd=execution_dir,
                         timeout=300
                     )
                     if result.exit_code != 0:
@@ -665,18 +676,18 @@ Open the terminal with **Ctrl+`** (backtick) and run:
             if config["run_cmd"] and not install_success:
                 log(f"⚠️ Skipping dev server — dependency install failed. Fix the errors above and restart.")
             elif config["run_cmd"]:
-                log(f"🏃 Starting dev server: {config['run_cmd']}")
+                log(f"🏃 Starting dev server: {config['run_cmd']} in {execution_dir}")
                 
                 # 1. Kill anything on the port first
                 try:
                     sandbox.commands.run(f"fuser -k {port}/tcp || true") 
-                except:
+                except Exception:
                     pass
 
                 try:
                     env_str = " ".join(f"{k}={v}" for k, v in config.get("env_vars", {}).items())
                     # Use setsid to prevent process from dying if shell disconnects (robustness)
-                    run_cmd = f"cd {work_dir} && {env_str} {config['run_cmd']} > /tmp/app.log 2>&1 &"
+                    run_cmd = f"cd {execution_dir} && {env_str} {config['run_cmd']} > /tmp/app.log 2>&1 &"
                     sandbox.commands.run(run_cmd, background=True)
                     log(f"✅ Dev server starting on port {port}")
                 except Exception as e:
@@ -710,7 +721,7 @@ Open the terminal with **Ctrl+`** (backtick) and run:
                 try:
                     log_content = sandbox.commands.run("cat /tmp/app.log").stdout
                     log(f"\n=== APPLICATION CRASH LOG ===\n{log_content[-1000:]}\n===========================")
-                except:
+                except Exception:
                     log("Could not read /tmp/app.log")
             
             # === Construct URLs ===
@@ -751,7 +762,6 @@ Open the terminal with **Ctrl+`** (backtick) and run:
                 "sandbox_id": sandbox_id,
                 "message": f"VS Code ready ({config['project_type']})",
                 "logs": "\n".join(logs),
-                "project_type": config["project_type"],
                 "project_type": config["project_type"],
                 "port": port,
                 "timeout": E2B_TIMEOUT_SECONDS

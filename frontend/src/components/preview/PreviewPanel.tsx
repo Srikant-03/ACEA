@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { X, Maximize2, Minimize2, ExternalLink, Loader2, Cloud, RefreshCw, Monitor, Eye, ArrowLeft, ArrowRight, Home, Globe, Lock } from "lucide-react"
+import { X, Maximize2, Minimize2, ExternalLink, Loader2, Cloud, RefreshCw, Monitor, Eye, ArrowLeft, ArrowRight, Home, Globe, Lock, FlaskConical } from "lucide-react"
+import { BrowserTestResults, type BrowserTestReport, type TestProgress } from "./BrowserTestResults"
 
 type PreviewMode = "preview" | "studio"
 
@@ -17,6 +18,13 @@ interface PreviewPanelProps {
     onTriggerVisualQA?: () => void
     visualQALoading?: boolean
     onModeSwitch?: (mode: PreviewMode) => void
+    // Browser Test props
+    onRunBrowserTest?: () => void
+    browserTestResults?: BrowserTestReport | null
+    browserTestProgress?: TestProgress | null
+    browserTestRunning?: boolean
+    onSendToFix?: (errors: string[]) => void
+    onClearBrowserTest?: () => void
 }
 
 export function PreviewPanel({
@@ -30,8 +38,15 @@ export function PreviewPanel({
     loadingStage = "Creating sandbox...",
     onTriggerVisualQA,
     visualQALoading = false,
-    onModeSwitch
+    onModeSwitch,
+    onRunBrowserTest,
+    browserTestResults = null,
+    browserTestProgress = null,
+    browserTestRunning = false,
+    onSendToFix,
+    onClearBrowserTest,
 }: PreviewPanelProps) {
+    const [showTestResults, setShowTestResults] = useState(false)
     const [isFullscreen, setIsFullscreen] = useState(false)
     const [iframeKey, setIframeKey] = useState(0)
     const [urlHistory, setUrlHistory] = useState<string[]>([])
@@ -100,8 +115,8 @@ export function PreviewPanel({
 
                         {/* Mode Indicator Badge */}
                         <div className={`ml-3 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${isStudioMode
-                                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
-                                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                            ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                            : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                             }`}>
                             {isStudioMode ? (
                                 <>
@@ -129,7 +144,27 @@ export function PreviewPanel({
                     </div>
 
                     <div className="flex items-center gap-2">
-                        {/* Visual QA Button */}
+                        {/* Browser Test Button */}
+                        {!isStudioMode && onRunBrowserTest && activeUrl && !isLoading && (
+                            <button
+                                onClick={() => {
+                                    setShowTestResults(true)
+                                    onRunBrowserTest()
+                                }}
+                                disabled={browserTestRunning}
+                                className="flex items-center gap-1 px-2 py-1 rounded bg-cyan-600/20 text-cyan-400 hover:bg-cyan-600/30 text-xs disabled:opacity-50 transition-colors"
+                                title="Run browser validation tests"
+                            >
+                                {browserTestRunning ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                    <FlaskConical className="w-3 h-3" />
+                                )}
+                                <span>Browser Test</span>
+                            </button>
+                        )}
+
+                        {/* Visual QA Button (kept as secondary) */}
                         {!isStudioMode && onTriggerVisualQA && activeUrl && !isLoading && (
                             <button
                                 onClick={onTriggerVisualQA}
@@ -223,7 +258,7 @@ export function PreviewPanel({
             </div>
 
             {/* Preview Content */}
-            <div className={`${isFullscreen ? 'h-[calc(100vh-88px)]' : 'h-[calc(100%-88px)]'} bg-slate-900`}>
+            <div className={`${isFullscreen ? 'h-[calc(100vh-88px)]' : 'h-[calc(100%-88px)]'} bg-slate-900 relative`}>
                 {isLoading ? (
                     <div className="flex flex-col items-center justify-center h-full text-white">
                         <div className="relative">
@@ -269,6 +304,20 @@ export function PreviewPanel({
                             </>
                         )}
                     </div>
+                )}
+
+                {/* Browser Test Results Overlay */}
+                {showTestResults && (browserTestRunning || browserTestResults) && (
+                    <BrowserTestResults
+                        results={browserTestResults}
+                        isRunning={browserTestRunning}
+                        progress={browserTestProgress}
+                        onClose={() => {
+                            setShowTestResults(false)
+                            onClearBrowserTest?.()
+                        }}
+                        onSendToFix={onSendToFix}
+                    />
                 )}
             </div>
         </div>

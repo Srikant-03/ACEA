@@ -673,7 +673,7 @@ Respond in JSON format:
             blueprint_path = project_path_obj / "blueprint.json"
             if blueprint_path.exists():
                 blueprint = json.loads(blueprint_path.read_text())
-        except:
+        except Exception:
             pass
             
         # Helper to detect files (mirroring E2B logic)
@@ -709,7 +709,7 @@ Respond in JSON format:
         # STATIC
         if architect_type == "static":
             install_cmd = ""
-            run_cmd = f"python3 -m http.server {port} --directory frontend"
+            run_cmd = f"python -m http.server {port} --directory frontend"
             await sm.emit("agent_log", {"agent_name": "WATCHER", "message": "🔹 Detected STATIC project (explicit)."})
             
         elif any("vite.config" in f for f in files):

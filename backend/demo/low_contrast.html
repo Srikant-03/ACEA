@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Low Contrast Test</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #ffffff;
+            color: #333;
+        }
+
+        .good {
+            color: #000;
+        }
+
+        .bad {
+            color: #ccc;
+        }
+
+        /* Light gray on white - Fail */
+        .invisible {
+            color: #ffffff;
+        }
+
+        /* White on white - Fail */
+        .button-bad {
+            background: #eee;
+            color: #fff;
+            border: none;
+            padding: 10px;
+        }
+
+        /* White on light gray - Fail */
+    </style>
+</head>
+
+<body>
+    <h1>Accessibility Test</h1>
+    <main>
+        <p class="good">This text has good contrast.</p>
+        <p class="bad">This text has bad contrast (gray on white).</p>
+        <p class="invisible">This text is invisible (white on white).</p>
+        <button class="button-bad">Bad Button</button>
+    </main>
+</body>
+
+</html>

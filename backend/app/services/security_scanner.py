@@ -96,7 +96,7 @@ class SecurityScanner:
             try:
                 if 'tmp_path' in locals():
                     os.unlink(tmp_path)
-            except:
+            except OSError:
                 pass
         
         return vulnerabilities
@@ -155,7 +155,7 @@ class SecurityScanner:
             try:
                 if 'tmp_path' in locals():
                     os.unlink(tmp_path)
-            except:
+            except OSError:
                 pass
         
         return vulnerabilities

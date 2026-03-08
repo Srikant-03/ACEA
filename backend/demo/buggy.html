@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buggy Demo Page for QA</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .demo-section {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .demo-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+
+        button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+
+        /* Layout bug: wide element causing horizontal scroll */
+        .wide-element {
+            width: 120vw;
+            background: pink;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+
+        /* Contrast bug: low contrast text */
+        .low-contrast {
+            color: #ccc;
+            background: #fff;
+        }
+
+        /* Hidden button but existing in DOM */
+        .hidden-btn {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- SEO Bug: Missing H1 (using H2 instead) -->
+    <div class="container">
+        <h2>Welcome to the Buggy QA Demo</h2>
+
+        <div class="demo-section">
+            <h3>Interactivity Tests</h3>
+            <p>This button works fine:</p>
+            <button onclick="console.log('Clicked ok')">Working Button</button>
+
+            <p>This button is disabled:</p>
+            <button disabled>Disabled Button</button>
+
+            <p>This button is hidden (in code):</p>
+            <button class="hidden-btn">Hidden Button</button>
+
+            <p>This button throws a JS error when clicked:</p>
+            <button onclick="throw new Error('Specific JS Error on Click')">Error Button</button>
+        </div>
+
+        <div class="demo-section">
+            <h3>Accessibility Tests</h3>
+            <p>Image missing alt text:</p>
+            <img src="https://via.placeholder.com/150" width="150" height="150">
+
+            <p>Input missing label:</p>
+            <input type="text" placeholder="Enter name (no label)">
+
+            <p class="low-contrast">This text has very low contrast.</p>
+        </div>
+
+        <div class="demo-section">
+            <h3>Layout & Responsiveness</h3>
+            <p>The pink box below is wider than the viewport, causing horizontal scroll:</p>
+            <div class="wide-element">I am too wide for mobile viewports!</div>
+        </div>
+
+        <div class="demo-section">
+            <h3>Visual Overlap Test</h3>
+            <div style="position: relative; height: 100px; border: 1px solid #ccc;">
+                <button style="position: absolute; top: 10px; left: 10px; z-index: 1;">Button A</button>
+                <button style="position: absolute; top: 15px; left: 15px; z-index: 2; background: red;">Button B
+                    (Overlaps A)</button>
+
+                <input type="text" placeholder="Input 1" style="position: absolute; top: 50px; left: 10px;">
+                <button style="position: absolute; top: 55px; left: 15px;">Overlapping Button</button>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h3>Broken Links</h3>
+            <p><a href="/non-existent-page">Broken Internal Link</a></p>
+            <p><a href="https://this-domain-does-not-exist-12345.com">Broken External Link</a></p>
+        </div>
+
+        <div class="demo-section">
+            <h3>Form Issues</h3>
+            <form action="/submit" method="POST">
+                <p>Form without a submit button:</p>
+                <input type="email" name="email" placeholder="Email (required)" required>
+            </form>
+        </div>
+    </div>
+
+</body>
+
+</html>

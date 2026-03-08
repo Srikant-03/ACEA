@@ -2,21 +2,26 @@
 
 import { useEffect, useState, useRef } from "react"
 import { AgentEntity, AgentConfig } from "./AgentEntity"
-import { LogEntry } from "@/types/socket"
+import { LogEntry, AgentsState } from "@/types/socket" // Import AgentsState
+import { BrowserTestReport } from "@/components/preview/BrowserTestResults" // Import BrowserTestReport
 
 // STATIC CONFIGURATION FOR AGENTS
 const AGENTS: AgentConfig[] = [
-    { name: "ARCHITECT", role: "Design", video: "/videos/bob.gif", color: "text-zinc-300" },
-    { name: "VIRTUOSO", role: "Execute", video: "/videos/chib.gif", color: "text-zinc-300" },
-    { name: "SENTINEL", role: "Security", video: "/videos/Shesu.gif", color: "text-zinc-300" },
-    { name: "ORACLE", role: "Data", video: "/videos/Sett.gif", color: "text-zinc-300" },
-    { name: "WATCHER", role: "Monitor", video: "/videos/eww.gif", color: "text-zinc-300" },
-    { name: "ADVISOR", role: "Guide", video: "/videos/eart.gif", color: "text-zinc-300" },
+    { name: "ARCHITECT", role: "Design", video: "/videos/bob.gif", color: "text-purple-400" },
+    { name: "VIRTUOSO", role: "Execute", video: "/videos/chib.gif", color: "text-blue-400" },
+    { name: "SENTINEL", role: "Security", video: "/videos/Shesu.gif", color: "text-red-400" },
+    { name: "ORACLE", role: "Data", video: "/videos/Sett.gif", color: "text-amber-400" },
+    { name: "WATCHER", role: "Monitor", video: "/videos/eww.gif", color: "text-emerald-400" },
+    { name: "ADVISOR", role: "Guide", video: "/videos/eart.gif", color: "text-pink-400" },
+    { name: "BROWSER_VALIDATOR", role: "QA", video: "/videos/Eyes.mp4", color: "text-cyan-400" }, // Added QA Agent
 ]
 
 interface AgentStageProps {
     logs: LogEntry[]
     className?: string
+    agents?: Partial<AgentsState> // New Prop
+    browserTestResults?: BrowserTestReport | null // New Prop
+    agentLogs?: Record<string, string[]> // Thinking history per agent
 }
 
 // Physics Constants
@@ -26,13 +31,10 @@ const REPULSION_FORCE = 0.005
 const BOUNDS_PADDING = 10 // Keep away from edges (%)
 const WANDER_STRENGTH = 0.002 // Random direction change
 
-export function AgentStage({ logs, className }: AgentStageProps) {
+export function AgentStage({ logs, className, agents = {}, browserTestResults, agentLogs = {} }: AgentStageProps) {
     const [thoughts, setThoughts] = useState<Record<string, string>>({})
 
     // Physics State stored in Ref to avoid React render loop lag, but we sync to State for render
-    // Using Ref for calculation, State for commit
-    // Physics State stored in Ref
-    // Physics State stored in Ref
     const INITIAL_AGENTS_STATE = AGENTS.map(() => ({
         x: 50,
         y: 50,
@@ -60,7 +62,10 @@ export function AgentStage({ logs, className }: AgentStageProps) {
         lastProcessedLogId.current = latestLog.id
 
         const agentName = latestLog.agent
-        const matchedAgent = AGENTS.find(a => a.name === agentName)
+        // Map BROWSER_TEST log to BROWSER_VALIDATOR agent
+        const mappedName = agentName === 'BROWSER_TEST' ? 'BROWSER_VALIDATOR' : agentName
+
+        const matchedAgent = AGENTS.find(a => a.name === mappedName)
 
         if (matchedAgent) {
             setThoughts(prev => ({ ...prev, [matchedAgent.name]: latestLog.message }))
@@ -100,22 +105,11 @@ export function AgentStage({ logs, className }: AgentStageProps) {
                 const { x, y } = agent
                 let { vx, vy } = agent
 
-                // 1. Wander (Random small pushes)
-                vx += (Math.random() - 0.5) * WANDER_STRENGTH
-                vy += (Math.random() - 0.5) * WANDER_STRENGTH
-
-                // Cap Velocity (Speed Limit)
-                const speed = Math.sqrt(vx * vx + vy * vy)
-                if (speed > SPEED) {
-                    vx = (vx / speed) * SPEED
-                    vy = (vy / speed) * SPEED
-                }
-
-                // 2. Repulsion (Avoid other agents)
-                allAgents.forEach((other, j) => {
+                // 1. Repulsion from Peers
+                allAgents.forEach((peer, j) => {
                     if (i === j) return
-                    const dx = x - other.x
-                    const dy = y - other.y
+                    const dx = x - peer.x
+                    const dy = y - peer.y
                     const dist = Math.sqrt(dx * dx + dy * dy)
 
                     if (dist < REPULSION_DIST && dist > 0) {
@@ -125,22 +119,32 @@ export function AgentStage({ logs, className }: AgentStageProps) {
                     }
                 })
 
-                // 3. Update Position
+                // 2. Center Gravity (Weak pull to center)
+                const dxC = 50 - x
+                const dyC = 50 - y
+                vx += dxC * 0.00005
+                vy += dyC * 0.00005
+
+                // 3. Wander (Random jitter)
+                vx += (Math.random() - 0.5) * WANDER_STRENGTH
+                vy += (Math.random() - 0.5) * WANDER_STRENGTH
+
+                // 4. Update Position
                 let newX = x + vx
                 let newY = y + vy
 
-                // 4. Boundary Bounce & Containment
-                if (newX < BOUNDS_PADDING) { newX = BOUNDS_PADDING; vx *= -1 }
-                if (newX > 100 - BOUNDS_PADDING) { newX = 100 - BOUNDS_PADDING; vx *= -1 }
-                if (newY < BOUNDS_PADDING) { newY = BOUNDS_PADDING; vy *= -1 }
-                if (newY > 100 - BOUNDS_PADDING) { newY = 100 - BOUNDS_PADDING; vy *= -1 }
+                // 5. Bounds Check (Bounce)
+                if (newX < BOUNDS_PADDING || newX > 100 - BOUNDS_PADDING) vx = -vx
+                if (newY < BOUNDS_PADDING || newY > 100 - BOUNDS_PADDING) vy = -vy
+
+                // 6. Damping (Friction)
+                vx *= 0.99
+                vy *= 0.99
 
                 return { x: newX, y: newY, vx, vy }
             })
 
-            // Commit to Render State
             setPositions([...physicsState.current])
-
             requestRef.current = requestAnimationFrame(animate)
         }
 
@@ -150,22 +154,38 @@ export function AgentStage({ logs, className }: AgentStageProps) {
         }
     }, [])
 
-    return (
-        <div className={`relative w-full h-full ${className}`}>
-            {/* Background Decorations */}
-            <div className="absolute inset-0 pointer-events-none opacity-5">
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60%] h-[60%] border border-zinc-700/30 rounded-full animate-[spin_60s_linear_infinite]" />
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[40%] h-[40%] border border-zinc-700/20 rounded-full border-dashed animate-[spin_40s_linear_infinite_reverse]" />
-            </div>
+    if (!mounted) return null
 
-            {mounted && AGENTS.map((agent, index) => (
-                <AgentEntity
-                    key={agent.name}
-                    agent={agent}
-                    thought={thoughts[agent.name] || null}
-                    position={positions[index]}
-                />
-            ))}
+    return (
+        <div className={className}>
+            {AGENTS.map((agent, i) => {
+                // Determine Status: Prioritize 'working' if thought is active
+                let status: 'idle' | 'working' | 'success' | 'error' = 'idle'
+
+                // If thought is active, force working
+                if (thoughts[agent.name]) {
+                    status = 'working'
+                } else {
+                    // Use backend status if available, fallback to idle
+                    const backendStatus = agents[agent.name as keyof AgentsState]
+                    if (backendStatus) status = backendStatus
+                }
+
+                // Pass report only to BROWSER_VALIDATOR
+                const report = agent.name === 'BROWSER_VALIDATOR' ? browserTestResults : undefined
+
+                return (
+                    <AgentEntity
+                        key={agent.name}
+                        agent={agent}
+                        thought={thoughts[agent.name] || null}
+                        position={{ x: positions[i].x, y: positions[i].y }}
+                        status={status}
+                        report={report}
+                        thinkingSteps={agentLogs[agent.name] || []}
+                    />
+                )
+            })}
         </div>
     )
 }

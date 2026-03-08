@@ -306,10 +306,13 @@ def safe_parse_json(raw: str) -> Tuple[Optional[dict], Optional[str]]:
         return None, "Empty input"
     
     # Stage 1: Direct parse
+    stage1_error = "JSON parsed successfully but result was not a dict"
     try:
         result = json.loads(raw, strict=False)
         if isinstance(result, dict):
             return result, None
+        # If we get here, JSON is valid but not a dict (e.g., array)
+        stage1_error = f"JSON parsed as {type(result).__name__}, expected dict"
     except json.JSONDecodeError as e:
         stage1_error = str(e)
     

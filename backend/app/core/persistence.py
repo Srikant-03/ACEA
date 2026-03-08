@@ -346,7 +346,7 @@ class CheckpointManager:
                         "step_id": meta.get("step_id"),
                         "source": "filesystem"
                     })
-                except:
+                except Exception:
                     pass
             return checkpoints
         except Exception as e:

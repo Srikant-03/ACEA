@@ -203,8 +203,17 @@ class ResumeEngine:
             )
             current_branch = result.stdout.strip()
             
-            expected_branch = state.current_branch or state.get("feature_branch", None)
+            # Use current_branch field, fall back to feature_branch for autonomously-created jobs
+            expected_branch = state.current_branch or getattr(state, "feature_branch", None)
             if expected_branch and current_branch != expected_branch:
+                # Sanitize branch name to prevent command injection
+                import re as _re
+                if not _re.match(r'^[a-zA-Z0-9_/.\-]+$', expected_branch):
+                    logger.error(
+                        f"ResumeEngine: Branch name '{expected_branch}' contains "
+                        f"invalid characters. Skipping checkout."
+                    )
+                    return
                 logger.warning(
                     f"ResumeEngine: Branch mismatch! "
                     f"Expected '{expected_branch}', found '{current_branch}'. "

@@ -228,7 +228,7 @@ class ReleaseAgent:
                         stack["framework"] = "react"
                     elif "vue" in deps:
                         stack["framework"] = "vue"
-            except:
+            except Exception:
                 pass
         
         if (project_path / "requirements.txt").exists():

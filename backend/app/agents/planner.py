@@ -196,7 +196,7 @@ Create a detailed, step-by-step execution plan. Each step should be atomic and v
       "risk_level": "low",
       "verification_method": "All tests pass",
       "estimated_tokens": 200,
-      "rationale": "Ensure no regressions",
+      "rationale": "Ensure no regressions"
     }}
   ]
 }}

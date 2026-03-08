@@ -12,6 +12,7 @@ import { socket } from "@/lib/socket"
 import FileExplorer, { FileNode } from "@/components/explorer/FileExplorer"
 import { CodeEditor } from "@/components/ide/CodeEditor"
 import { PreviewPanel } from "@/components/preview/PreviewPanel"
+import type { BrowserTestReport, TestProgress } from "@/components/preview/BrowserTestResults"
 import { cn } from "@/lib/utils"
 import { motion } from "framer-motion"
 import { StatusPanel } from "@/components/war-room/StatusPanel"
@@ -39,7 +40,8 @@ export default function WarRoomPage() {
     const [logs, setLogs] = useState<any[]>([])
     const [agents, setAgents] = useState<any>({
         ARCHITECT: "idle", VIRTUOSO: "idle", SENTINEL: "idle",
-        ORACLE: "idle", WATCHER: "idle", ADVISOR: "idle"
+        ORACLE: "idle", WATCHER: "idle", ADVISOR: "idle",
+        BROWSER_VALIDATOR: "idle"
     })
     const [prompt, setPrompt] = useState("")
     const [techStack, setTechStack] = useState("Auto-detect")
@@ -81,6 +83,14 @@ export default function WarRoomPage() {
     // Backend URL
     const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"
 
+    // --- BROWSER TEST STATE ---
+    const [browserTestResults, setBrowserTestResults] = useState<BrowserTestReport | null>(null)
+    const [browserTestProgress, setBrowserTestProgress] = useState<TestProgress | null>(null)
+    const [browserTestRunning, setBrowserTestRunning] = useState(false)
+
+    // --- AGENT THINKING HISTORY ---
+    const [agentLogs, setAgentLogs] = useState<Record<string, string[]>>({})
+
     // --- GUARDRAILS STATE ---
     const [appMode, setAppMode] = useState<'preview' | 'studio'>('preview')
     const [showStudioConfirm, setShowStudioConfirm] = useState(false)
@@ -96,6 +106,11 @@ export default function WarRoomPage() {
             const newLogs = [...prev.slice(-49), { id: uniqueId, agent, message, timestamp: new Date().toLocaleTimeString(), type }]
             return newLogs
         })
+        // Accumulate per-agent thinking history
+        setAgentLogs(prev => ({
+            ...prev,
+            [agent]: [...(prev[agent] || []).slice(-19), message]
+        }))
     }
 
     const handleEnterStudio = () => {
@@ -258,6 +273,25 @@ export default function WarRoomPage() {
             }
         })
 
+        // Browser Test events
+        socket.on("preview_test_progress", (data: any) => {
+            setBrowserTestProgress(data)
+            if (data.phase === 'starting' || data.phase === 'validating') {
+                setBrowserTestRunning(true)
+                setAgents((prev: any) => ({ ...prev, BROWSER_VALIDATOR: 'working' }))
+            }
+        })
+
+        socket.on("preview_test_complete", (data: any) => {
+            setBrowserTestResults(data)
+            setBrowserTestRunning(false)
+            setBrowserTestProgress(null)
+            const status = data.overall_status || 'UNKNOWN'
+            const agentStatus = (status === 'ERROR' || status === 'FAIL') ? 'error' : 'success'
+            setAgents((prev: any) => ({ ...prev, BROWSER_VALIDATOR: agentStatus }))
+            addLog('BROWSER_TEST', `Browser test complete: ${status} (${data.total_issues || 0} issues)`, status === 'ERROR' || status === 'FAIL' ? 'error' : 'success')
+        })
+
         // Timer countdown
         const timerInterval = setInterval(() => {
             setTimeoutSeconds(prev => prev > 0 ? prev - 1 : 0)
@@ -281,6 +315,8 @@ export default function WarRoomPage() {
             socket.off("checkpoint_saved")
             socket.off("execution_log")
             socket.off("thought_signature")
+            socket.off("preview_test_progress")
+            socket.off("preview_test_complete")
         }
     }, [])
 
@@ -642,7 +678,7 @@ export default function WarRoomPage() {
 
                             {/* NEW DASHBOARD COMPONENTS */}
                             <div className="space-y-4 mt-6 border-t border-white/5 pt-6">
-                                <StatusPanel agents={agents} />
+                                <StatusPanel agents={agents} agentLogs={agentLogs} />
                                 <MetricsDashboard data={metricsData} />
                                 <SystemHealth />
                                 <NetworkMap />
@@ -702,6 +738,7 @@ export default function WarRoomPage() {
                                 {showPreview && (previewUrl || isLoadingPreview) && (
                                     <div className="absolute inset-0 z-20">
                                         <PreviewPanel
+                                            projectId={projectId || undefined}
                                             previewUrl={previewUrl || undefined}
                                             techStack={previewTechStack}
                                             isLoading={isLoadingPreview}
@@ -714,6 +751,33 @@ export default function WarRoomPage() {
                                             }}
                                             mode={appMode}
                                             onModeSwitch={(m) => m === 'studio' ? handleEnterStudio() : handleExitStudio()}
+                                            onRunBrowserTest={() => {
+                                                if (!projectId) return
+                                                setBrowserTestResults(null)
+                                                setBrowserTestRunning(true)
+                                                setBrowserTestProgress({ phase: 'starting', message: 'Initializing…' })
+                                                addLog('SYSTEM', '🧪 Running browser tests…', 'info')
+                                                socket.emit('run_preview_browser_test', {
+                                                    project_id: projectId,
+                                                    validation_level: 'standard',
+                                                })
+                                            }}
+                                            browserTestResults={browserTestResults}
+                                            browserTestProgress={browserTestProgress}
+                                            browserTestRunning={browserTestRunning}
+                                            onSendToFix={(errors) => {
+                                                if (!projectId) return
+                                                addLog('SYSTEM', `🔄 Sending ${errors.length} errors to self-healing…`, 'info')
+                                                socket.emit('send_to_fix', {
+                                                    project_id: projectId,
+                                                    errors: errors,
+                                                })
+                                            }}
+                                            onClearBrowserTest={() => {
+                                                setBrowserTestResults(null)
+                                                setBrowserTestProgress(null)
+                                                setBrowserTestRunning(false)
+                                            }}
                                         />
                                     </div>
                                 )}
@@ -813,7 +877,13 @@ export default function WarRoomPage() {
                             ) : (
                                 /* Grid Initial State - Live Agent Stage */
                                 <div className="h-full w-full relative bg-black">
-                                    <AgentStage logs={logs} className="w-full h-full" />
+                                    <AgentStage
+                                        logs={logs}
+                                        className="w-full h-full"
+                                        agents={agents}
+                                        browserTestResults={browserTestResults}
+                                        agentLogs={agentLogs}
+                                    />
                                 </div>
                             )}
                         </div>

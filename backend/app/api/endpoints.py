@@ -490,8 +490,11 @@ async def download_artifacts(job_id: str):
     if not job_dir.exists():
         raise HTTPException(404, "Artifacts not found")
     
-    # Create ZIP
-    zip_path = tempfile.mktemp(suffix=".zip")
+    # Create ZIP — use NamedTemporaryFile to avoid TOCTOU race condition  
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    zip_path = tmp.name
+    tmp.close()
     
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for file_path in job_dir.rglob("*"):
@@ -862,6 +865,17 @@ async def validate_url(request: URLValidationRequest):
         project_path="",
         validation_level=request.validation_level
     )
+
+
+@router.post("/preview-browser-test/{project_id}")
+async def run_preview_browser_test(project_id: str, request: BrowserValidationRequest):
+    """
+    Run browser validation on the live preview (REST alternative to Socket.IO).
+    Uses PreviewBrowserTestService for URL resolution and structured reporting.
+    """
+    from app.services.preview_browser_test_service import get_preview_browser_test_service
+    service = get_preview_browser_test_service()
+    return await service.run_test(project_id, request.validation_level)
 
 
 # ========================= SECURITY =========================
