@@ -574,10 +574,299 @@ class ProjectRunner:
         
         return None
     
+    def _scan_js_imports(self) -> set[str]:
+        """Scan JS/TS source files for imports."""
+        import re
+        detected_packages = set()
+        # Regex for capturing imports: import X from 'package', require('package')
+        import_pattern = re.compile(r"""(?:import\s+.*?from\s+['"]([^'"]+)['"])|(?:require\s*\(\s*['"]([^'"]+)['"]\s*\))""")
+        
+        extensions = ['*.js', '*.jsx', '*.ts', '*.tsx']
+        for ext in extensions:
+            for file_path in self.frontend_path.rglob(ext):
+                if "node_modules" in str(file_path) or ".next" in str(file_path): continue
+                try:
+                    content = file_path.read_text(encoding='utf-8', errors='ignore')
+                    matches = import_pattern.findall(content)
+                    for match in matches:
+                        pkg = match[0] or match[1]
+                        if not pkg: continue
+                        if pkg.startswith('.') or pkg.startswith('/'): continue
+                        if pkg.startswith('@/'): continue # Skip aliases like @/components
+                        if pkg == '@': continue # Skip bare alias
+                        
+                        parts = pkg.split('/')
+                        if pkg.startswith('@') and len(parts) >= 2:
+                            pkg_name = f"{parts[0]}/{parts[1]}"
+                        else:
+                            pkg_name = parts[0]
+                        
+                        if pkg_name in ['fs', 'path', 'os', 'http', 'https', 'crypto', 'util', 'events', 'stream', 'child_process', 'next', 'react', 'react-dom']:
+                             continue
+                        detected_packages.add(pkg_name)
+                except Exception:
+                    continue
+        return detected_packages
+
+    def _scan_python_imports(self) -> set[str]:
+        """Scan Python source files for imports."""
+        import re
+        detected = set()
+        # Regex: from X import Y, import X
+        pattern = re.compile(r"^\s*(?:from|import)\s+(\w+)", re.MULTILINE)
+        
+        # Python StdLib (partial list of common modules to ignore)
+        stdlib = {
+            'os', 'sys', 're', 'json', 'math', 'random', 'datetime', 'time', 'collections', 
+            'itertools', 'functools', 'typing', 'pathlib', 'abc', 'copy', 'logging', 
+            'subprocess', 'threading', 'asyncio', 'socket', 'urllib', 'http', 'email', 'uuid',
+            'argparse', 'shutil', 'glob', 'pickle', 'io', 'contextlib', 'unittest', 'warnings', 'platform'
+        }
+        
+        for file_path in self.frontend_path.rglob("*.py"):
+             if "venv" in str(file_path) or "__pycache__" in str(file_path): continue
+             try:
+                 content = file_path.read_text(encoding='utf-8', errors='ignore')
+                 matches = pattern.findall(content)
+                 for pkg in matches:
+                     if not pkg: continue
+                     if pkg in stdlib: continue
+                     
+                     # Check if it's a local module (file or directory)
+                     # 1. Check relative to current file (for flat structure or colocated files)
+                     local_file = file_path.parent / f"{pkg}.py"
+                     local_dir = file_path.parent / pkg
+                     if local_file.exists() or local_dir.is_dir():
+                         continue
+                         
+                     # 2. Check relative to project root (for src/pkg imports)
+                     root_file = self.frontend_path / f"{pkg}.py"
+                     root_dir = self.frontend_path / pkg
+                     if root_file.exists() or root_dir.is_dir():
+                         continue
+
+                     detected.add(pkg)
+             except Exception:
+                 continue
+        return detected
+
+    def _ensure_dependencies(self):
+        """
+        Ensure detected imports are present in manifest files.
+        Auto-fixes package.json (JS) and requirements.txt (Python).
+        """
+        import json
+        
+        # 1. JavaScript / Node.js
+        pkg_path = self.frontend_path / "package.json"
+        if pkg_path.exists():
+            try:
+                detected = self._scan_js_imports()
+                with open(pkg_path, 'r', encoding='utf-8') as f:
+                    pkg_data = json.load(f)
+                
+                deps = pkg_data.get('dependencies', {})
+                dev_deps = pkg_data.get('devDependencies', {})
+                all_deps = set(deps.keys()) | set(dev_deps.keys())
+                
+                missing = [p for p in detected if p not in all_deps]
+                if missing:
+                    self._log(f"🛠️ Auto-fixing JS dependencies: {', '.join(missing)}")
+                    for p in missing:
+                        deps[p] = "*"
+                    pkg_data['dependencies'] = deps
+                    
+                # 1b. Config-based dependencies (e.g. postcss, tailwind)
+                # These aren't always imported in code but are required by config files
+                config_deps = []
+                if (self.frontend_path / "postcss.config.js").exists() or (self.frontend_path / "postcss.config.mjs").exists():
+                    if "autoprefixer" not in all_deps: config_deps.append("autoprefixer")
+                    if "postcss" not in all_deps: config_deps.append("postcss")
+                
+                if (self.frontend_path / "tailwind.config.ts").exists() or (self.frontend_path / "tailwind.config.js").exists():
+                    if "tailwindcss" not in all_deps: config_deps.append("tailwindcss")
+                    
+                if config_deps:
+                    self._log(f"🛠️ Auto-fixing Config dependencies: {', '.join(config_deps)}")
+                    for p in config_deps:
+                        deps[p] = "*"
+                    pkg_data['dependencies'] = deps
+                    missing.extend(config_deps)
+
+                if missing or config_deps:
+                    with open(pkg_path, 'w', encoding='utf-8') as f:
+                        json.dump(pkg_data, f, indent=2)
+                    self._log(f"✅ Added {len(missing) + len(config_deps)} missing packages to package.json")
+            except Exception as e:
+                self._log(f"⚠️ JS auto-fix failed: {e}")
+
+        # 2. Python
+        req_path = self.frontend_path / "requirements.txt"
+        if req_path.exists():
+            try:
+                detected = self._scan_python_imports()
+                existing_content = req_path.read_text(encoding='utf-8')
+                # Naive check: does the string exist? 
+                # Better: Parse lines.
+                existing_pkgs = {line.split('==')[0].split('>=')[0].strip() for line in existing_content.splitlines()}
+                
+                missing = [p for p in detected if p not in existing_pkgs]
+                if missing:
+                    self._log(f"🛠️ Auto-fixing Python requirements: {', '.join(missing)}")
+                    with open(req_path, "a", encoding="utf-8") as f:
+                        for p in missing:
+                            f.write(f"\n{p}")
+                    self._log(f"✅ Added {len(missing)} missing packages to requirements.txt")
+            except Exception as e:
+                self._log(f"⚠️ Python auto-fix failed: {e}")
+
+    def _configure_environment(self, port: int):
+        """
+        Auto-configure environment variables for the project.
+        Creates .env and .env.local with stack-agnostic variables.
+        """
+        # Supports variables for Next.js, Vite, CRA, and generic backend
+        api_base_url = f"http://localhost:{port}"
+        
+        env_vars = {
+            "PORT": str(port),
+            "API_BASE_URL": api_base_url,                # Generic / Python / Go
+            "BASE_URL": api_base_url,                    # Generic variant
+            "NEXT_PUBLIC_API_BASE_URL": api_base_url,    # Next.js client
+            "NEXT_PUBLIC_BASE_URL": api_base_url,        # Next.js client variant
+            "VITE_API_BASE_URL": api_base_url,           # Vite client
+            "REACT_APP_API_BASE_URL": api_base_url,      # Create React App
+        }
+        
+        env_content = "\n# ACEA Auto-Generated Configuration (Multi-Stack)\n"
+        for key, val in env_vars.items():
+            env_content += f"{key}={val}\n"
+        
+        targets = [".env.local", ".env"] 
+        # .env.local is preferred by Next.js/CRA as local override
+        # .env is standard
+        
+        for fname in targets:
+            env_path = self.frontend_path / fname
+            try:
+                # Append if exists, ensuring variables aren't duplicated? 
+                # For simplicity/robustness, we append missing ones or create new.
+                mode = "a" if env_path.exists() else "w"
+                if mode == "a":
+                    current = env_path.read_text(encoding='utf-8')
+                    # Just append keys that don't exist in current file
+                    to_append = ""
+                    for key, val in env_vars.items():
+                        if key not in current:
+                            to_append += f"{key}={val}\n"
+                    if to_append:
+                        with open(env_path, "a", encoding="utf-8") as f:
+                            f.write(f"\n{to_append}")
+                        self._log(f"✅ Updated {fname}")
+                else:
+                    with open(env_path, "w", encoding="utf-8") as f:
+                        f.write(env_content.strip())
+                    self._log(f"✅ Created {fname}")
+            except Exception as e:
+                self._log(f"⚠️ Failed to configure {fname}: {e}")
+
+    def _fix_postcss_config(self):
+        """
+        Detect and fix invalid PostCSS configurations.
+        Specifically handles the 'intentionally left empty' placeholder that breaks builds.
+        """
+        config_files = ["postcss.config.js", "postcss.config.mjs", "postcss.config.cjs"]
+        found_config = None
+        
+        for fname in config_files:
+            if (self.frontend_path / fname).exists():
+                found_config = self.frontend_path / fname
+                break
+        
+        # If no config or invalid config, enforce a correct one if Tailwind is used
+        is_tailwind = (self.frontend_path / "tailwind.config.ts").exists() or \
+                      (self.frontend_path / "tailwind.config.js").exists() or \
+                      (self.frontend_path / "tailwind.config.mjs").exists()
+        
+        if is_tailwind:
+            # Check content if file exists
+            should_overwrite = False
+            if found_config:
+                try:
+                   content = found_config.read_text(encoding='utf-8')
+                   if "intentionally left empty" in content or "module.exports = {}" in content.replace(" ", ""):
+                       should_overwrite = True
+                       self._log(f"⚠️ Dectected invalid PostCSS config in {found_config.name}. Overwriting.")
+                except Exception:
+                    should_overwrite = True
+            else:
+                should_overwrite = True # missing config but tailwind present
+                found_config = self.frontend_path / "postcss.config.js"
+
+            if should_overwrite:
+                # Tailwind v4 compliant config (using the plugin)
+                valid_config = """
+module.exports = {
+  plugins: {
+    '@tailwindcss/postcss': {},
+  },
+};
+"""
+                try:
+                    found_config.write_text(valid_config.strip(), encoding='utf-8')
+                    self._log(f"✅ Fixed PostCSS configuration in {found_config.name}")
+                except Exception as e:
+                    self._log(f"⚠️ Failed to fix PostCSS config: {e}")
+
+    def _clean_cache(self):
+        """
+        Clean build caches to prevent Windows file locking issues (ENOENT on rename).
+        Specifically targets Next.js and Webpack caches.
+        Retry logic included.
+        """
+        import shutil
+        import time
+        import errno
+        
+        # Targets to clean
+        targets = [
+            self.frontend_path / ".next" / "cache",
+            self.frontend_path / "node_modules" / ".cache",
+            self.frontend_path / ".vite"
+        ]
+        
+        def on_error(func, path, exc):
+            """Error handler for shutil.rmtree to handle read-only files on Windows."""
+            # Is the error an access error?
+            if exc[0] is PermissionError or exc[0] is OSError:
+                # Try to make it writable and try again
+                try:
+                    os.chmod(path, 0o777)
+                    func(path)
+                except Exception:
+                    pass # Give up
+        
+        for target in targets:
+            if target.exists():
+                retries = 3
+                for i in range(retries):
+                    try:
+                        shutil.rmtree(target, ignore_errors=False, onerror=on_error)
+                        self._log(f"🧹 Cleared cache: {target.name}")
+                        break
+                    except Exception as e:
+                        if i < retries - 1:
+                            time.sleep(0.5) # Wait for lock release
+                        else:
+                            self._log(f"⚠️ Failed to clear cache {target.name}: {e}")
+
     async def start_frontend(self, run_cmd: str = "npm run dev") -> Dict[str, Any]:
         """Start the dev server using the provided command, enforcing self.frontend_port."""
         if self.frontend_process and self.frontend_process.poll() is None:
             return {"success": True, "message": "Already running", "port": self.frontend_port, "url": f"http://localhost:{self.frontend_port}"}
+        
+        # Clean cache to prevent race conditions/locking
+        self._clean_cache()
         
         try:
             # Pre-flight: Validate project structure before starting
@@ -588,6 +877,17 @@ class ProjectRunner:
             
             port = self.frontend_port
             self._log(f"Starting server on port {port}...")
+            
+            # --- ROBUSTNESS: AUTO-FIXERS ---
+            # 1. Ensure all used imports are in package.json
+            self._ensure_dependencies()
+            
+            # 2. Configure environment (API URL, etc.)
+            self._configure_environment(port)
+            
+            # 3. Fix configuration files (PostCSS)
+            self._fix_postcss_config()
+            # -------------------------------
             
             # Patch package.json to replace any hardcoded port with ours
             self._patch_package_json_port(port)

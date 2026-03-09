@@ -103,10 +103,38 @@ class E2BVSCodeService:
         # Default config (Dynamic Fallback)
         execution_dir = "/home/user/project"
         
-        # Detect if project is nested in 'frontend/'
-        if "frontend/package.json" in files and "package.json" not in files:
-            execution_dir = "/home/user/project/frontend"
-        elif "frontend/index.html" in files and "index.html" not in files:
+        # Detect project root directory (execution_dir)
+        project_root = ""
+        
+        # Priority 1: Explicit Root
+        if "package.json" in files or "requirements.txt" in files or "Gemfile" in files:
+            project_root = ""
+        # Priority 2: Standard Subdirectories
+        elif "frontend/package.json" in files:
+            project_root = "frontend"
+        elif "backend/requirements.txt" in files:
+            project_root = "backend"
+        elif "backend/package.json" in files:
+            project_root = "backend"
+        # Priority 3: Deep Search for Config Files
+        else:
+            # Find the shallowest package.json or requirements.txt
+            candidates = []
+            for f in files.keys():
+                if f.endswith("package.json") or f.endswith("requirements.txt") or f.endswith("Gemfile"):
+                    parts = f.replace("\\", "/").split("/")
+                    if len(parts) > 1: # It's in a subdir
+                        candidates.append("/".join(parts[:-1]))
+            
+            if candidates:
+                # Sort by depth (shallowest first)
+                candidates.sort(key=lambda x: x.count("/"))
+                project_root = candidates[0]
+
+        execution_dir = f"/home/user/project/{project_root}" if project_root else "/home/user/project"
+        
+        # Special case: Static HTML in frontend folder
+        if "frontend/index.html" in files and "index.html" not in files and not project_root:
              execution_dir = "/home/user/project/frontend"
 
         config = {
@@ -360,6 +388,27 @@ class E2BVSCodeService:
             
         return '\n'.join(cleaned_lines)
 
+    def _patch_vite_config(self, content: str) -> str:
+        """
+        Patch vite.config.js/ts to allow E2B hostnames.
+        Fixes 'Blocked request' error.
+        """
+        if "allowedHosts" in content:
+            return content
+            
+        # Try to find existing server block
+        if "server:" in content:
+            # Inject allowedHosts: true into existing server block
+            # Start simple: replace 'server: {' with 'server: {\n    allowedHosts: true,'
+            content = content.replace("server: {", "server: {\n    allowedHosts: true,")
+        else:
+            # Inject server block into defineConfig
+            # Find defineConfig({ and inject server: { allowedHosts: true },
+            if "defineConfig({" in content:
+                content = content.replace("defineConfig({", "defineConfig({\n  server: { allowedHosts: true },")
+        
+        return content
+
     def _create_instructions_file(self, preview_url: str, vscode_url: str, config: dict, files: dict) -> str:
         """Generate helpful INSTRUCTIONS.md content."""
         project_type = config.get("project_type", "unknown")
@@ -551,6 +600,11 @@ Open the terminal with **Ctrl+`** (backtick) and run:
                 if file_path.endswith("Gemfile"):
                     content = self._sanitize_gemfile(content)
                     log(f"🧹 Sanitized Gemfile for Linux compatibility")
+                
+                # SANITIZATION: Patch Vite config to allow E2B hosts
+                if "vite.config" in file_path:
+                    content = self._patch_vite_config(content)
+                    log(f"🔓 Patched Vite config to allow external hosts")
 
                 try:
                     parent_dir = str(Path(full_path).parent)

@@ -284,6 +284,7 @@ export function PreviewPanel({
                         key={iframeKey}
                         src={activeUrl}
                         className="w-full h-full border-0 bg-white"
+                        style={{ backgroundColor: 'white' }}
                         title={isStudioMode ? "Studio Mode Desktop" : "E2B Cloud Preview"}
                         allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone; midi; clipboard-read; clipboard-write"
                         onLoad={handleIframeLoad}

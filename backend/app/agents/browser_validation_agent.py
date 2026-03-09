@@ -277,7 +277,8 @@ class BrowserValidationAgent:
                 results["issues"].append(f"{buttons - buttons_with_text} buttons without text content")
             
             # 6. Color Contrast Check (WCAG AA)
-            contrast_issues = await page.evaluate("""() => {
+            print(f"DEBUG: Event Loop Type: {asyncio.get_event_loop().__class__.__name__}")
+            contrast_issues = await page.evaluate(r"""() => {
                 function getLuminance(r, g, b) {
                     const a = [r, g, b].map(v => {
                         v /= 255;
